@@ -1,11 +1,14 @@
 # PanoPath
 
+[![Docker Hub](https://img.shields.io/docker/pulls/illerin/panopath?logo=docker&logoColor=white)](https://hub.docker.com/r/illerin/panopath)
+[![GitHub](https://img.shields.io/badge/source-GitHub-181717?logo=github)](https://github.com/illerin/PanoPath)
+
 A self-hosted Docker tool for building interactive 360° panorama tours. Upload panorama images, add hotspots, configure branding, place floor plan dots, then export a self-contained ZIP you can host anywhere.
 
 ## Features
 
 - Upload equirectangular panoramas (JPG, PNG, HEIC/HEIF, TIFF, WebP)
-- Non-panorama images are supported.
+- Non-panorama images are supported — padded onto a white canvas automatically
 - Multi-resolution cube face tiling (server-side, no GPU required)
 - Info hotspots (click to expand text) and link hotspots (navigate between scenes)
 - 7 link hotspot icon styles (camera, arrow, door, star, eye, location) with fully customisable colours
@@ -21,13 +24,49 @@ A self-hosted Docker tool for building interactive 360° panorama tours. Upload 
 
 ## Quick Start
 
+No clone or build needed — pull the image directly from Docker Hub:
+
 ```bash
-git clone <this-repo>
-cd panopath
-docker-compose up -d
+docker run -d \
+  --name panopath \
+  -p 3098:3098 \
+  -v panopath_tiles:/app/tmp/tiles \
+  --restart unless-stopped \
+  illerin/panopath:latest
 ```
 
 Open **http://localhost:3098** in your browser.
+
+Or with docker-compose — create a `docker-compose.yml` with the following content and run `docker-compose up -d`:
+
+```yaml
+services:
+  panopath:
+    image: illerin/panopath:latest
+    container_name: panopath
+    ports:
+      - "3098:3098"
+    volumes:
+      - panopath_tiles:/app/tmp/tiles
+    environment:
+      - PORT=3098
+      - NODE_ENV=production
+    restart: unless-stopped
+
+volumes:
+  panopath_tiles:
+    driver: local
+```
+
+### Building from source
+
+If you want to modify the server code and rebuild the image yourself:
+
+```bash
+git clone https://github.com/illerin/PanoPath
+cd PanoPath
+docker-compose up -d
+```
 
 ## Usage
 
@@ -88,7 +127,7 @@ Select a scene in the left sidebar to edit:
 
 ## Deploying the exported tour
 
-The ZIP works on any static web server:
+The exported ZIP is fully self-contained — no internet connection required. Extract and open `index.html` on any static web server:
 
 ```bash
 unzip my-tour.zip -d my-tour
@@ -97,14 +136,6 @@ cd my-tour
 python3 -m http.server 8080
 # Or upload to Netlify, GitHub Pages, nginx, Apache, etc.
 ```
-
-### Offline use
-
-The viewer loads `marzipano.js` from a CDN by default. For fully offline use:
-
-1. Download: `https://cdn.jsdelivr.net/npm/marzipano@0.10.2/dist/marzipano.js`
-2. Place it in the extracted folder
-3. In `index.html`, replace the CDN script tag with: `<script src="marzipano.js"></script>`
 
 ## Supported image formats
 
@@ -137,7 +168,21 @@ panopath/
 
 ## Updating files without rebuilding
 
-For static file changes (HTML/CSS/JS), copy directly into the running container:
+The image is automatically rebuilt and pushed to Docker Hub whenever the GitHub repo is updated. To pull the latest image:
+
+```bash
+docker pull illerin/panopath:latest
+docker-compose up -d
+```
+
+If you need to patch a specific file without pulling a new image, copy it directly into the running container. If you don't have a local clone, download the file from GitHub first:
+
+```bash
+curl -o tool.js https://raw.githubusercontent.com/illerin/PanoPath/main/public/js/tool.js
+docker cp tool.js panopath:/app/public/js/tool.js
+```
+
+Or if you do have a local clone:
 
 ```bash
 docker cp public/index.html panopath:/app/public/index.html
@@ -145,19 +190,11 @@ docker cp public/js/tool.js panopath:/app/public/js/tool.js
 docker cp public/css/tool.css panopath:/app/public/css/tool.css
 ```
 
-For server changes (`server/index.js`):
+For server changes (`server/index.js`), restart after copying:
 
 ```bash
 docker cp server/index.js panopath:/app/server/index.js
 docker restart panopath
-```
-
-For dependency changes (`package.json`), rebuild:
-
-```bash
-docker-compose down
-docker-compose build --no-cache
-docker-compose up -d
 ```
 
 ## Data persistence
