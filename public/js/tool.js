@@ -45,6 +45,7 @@
       levels: result.levels,
       faceSize: result.faceSize,
       previewUrl: result.previewUrl,
+      sourceUrl: result.sourceUrl || null,
       initialView: result.suggestedInitialView || { yaw:0, pitch:0, fov:1.5707963 },
       initialViewSet: false,
       hotspots: [],
@@ -64,6 +65,7 @@
     sc.initialViewSet = !!sc.initialViewSet;
     sc.projection = sc.projection || (sc.isPano===false ? 'flat' : 'cube');
     sc.flat = sc.flat || null;
+    sc.sourceUrl = sc.sourceUrl || null;
     sc.planDot = sc.planDot || null;
     if(sc.planDot && sc.planDot.rotation == null) sc.planDot.rotation = 0;
     sc.compassEnabled = sc.compassEnabled !== false;
@@ -257,14 +259,19 @@
         y: (viewToUse && viewToUse.y!=null) ? viewToUse.y : 0.5,
         zoom: (viewToUse && viewToUse.zoom!=null) ? viewToUse.zoom : 1
       }, fLim);
-      return state.marzViewer.createScene({source:fSrc,geometry:fGeo,view:fView,pinFirstLevel:true});
+      var sc = state.marzViewer.createScene({source:fSrc,geometry:fGeo,view:fView,pinFirstLevel:true});
+      return sc;
     }
 
+    if(!sd.levels || !sd.levels.length) throw new Error('Scene '+sd.id+' has no levels');
+    if(!sd.faceSize) throw new Error('Scene '+sd.id+' has no faceSize');
     var geo=new Marzipano.CubeGeometry(sd.levels);
-    var src=Marzipano.ImageUrlSource.fromString('/tiles/'+sd.id+'/{z}/{f}/{y}/{x}.jpg',{cubeMapPreviewUrl:sd.previewUrl});
+    var tileUrl='/tiles/'+sd.id+'/{z}/{f}/{y}/{x}.jpg';
+    var src=Marzipano.ImageUrlSource.fromString(tileUrl,{cubeMapPreviewUrl:sd.previewUrl});
     var lim=Marzipano.RectilinearView.limit.traditional(sd.faceSize,120*Math.PI/180);
     var view=new Marzipano.RectilinearView(viewToUse,lim);
-    return state.marzViewer.createScene({source:src,geometry:geo,view:view,pinFirstLevel:true});
+    var sc = state.marzViewer.createScene({source:src,geometry:geo,view:view,pinFirstLevel:true});
+    return sc;
   }
 
   function applyViewToScene(sd, scene, viewToUse) {
@@ -300,10 +307,16 @@
     e.target.value='';
   });
 
-  // ── Drag & drop ────────────────────────────────────────────────────────────
-  document.addEventListener('dragover', function(e){ e.preventDefault(); e.dataTransfer.dropEffect='copy'; $('#drop-overlay').hidden=false; });
+  // ── Drag & drop (file import) ──────────────────────────────────────────────
+  document.addEventListener('dragover', function(e){
+    // Suppress the file-drop overlay when reordering scenes
+    if (_dragSrcId) return;
+    e.preventDefault(); e.dataTransfer.dropEffect='copy'; $('#drop-overlay').hidden=false;
+  });
   document.addEventListener('dragleave', function(e){ if(!e.relatedTarget) $('#drop-overlay').hidden=true; });
   document.addEventListener('drop', function(e){
+    // Suppress file import when reordering scenes
+    if (_dragSrcId) return;
     e.preventDefault(); $('#drop-overlay').hidden=true;
     var files=Array.from(e.dataTransfer.files).filter(isImageFile);
     if(!files.length){ alert('No supported images found.'); return; }
@@ -604,7 +617,11 @@
           state.scenes.push(scene);
           if(!state.firstSceneId) state.firstSceneId=scene.id;
           addSceneToSidebar(scene);
-          activateScene(scene.id);
+          try {
+            activateScene(scene.id);
+          } catch(e) {
+            console.error('activateScene failed for scene '+scene.id+':', e);
+          }
           modal.hidden=true; fill.style.width='0%';
           updatePreviewOverlay(); cb&&cb();
         },200);
@@ -613,17 +630,68 @@
   }
 
   // ── Sidebar ────────────────────────────────────────────────────────────────
+  var _dragSrcId = null;
+
   function addSceneToSidebar(scene){
     $('#drop-hint').style.display='none';
     var item=el('div','scene-item'); item.dataset.id=scene.id;
+
+    // Drag handle
+    var handle=el('div','scene-drag-handle','⠿'); handle.title='Drag to reorder';
+
     var thumb=document.createElement('img'); thumb.className='scene-thumb'; thumb.src=scene.previewUrl; thumb.alt='';
     var nameWrap=el('div','scene-name-wrap');
     var nameSpan=el('span','scene-name',scene.name); nameSpan.title='Double-click to rename';
     attachRename(nameSpan,scene); nameWrap.appendChild(nameSpan);
     var del=el('button','scene-del','✕'); del.title='Remove';
     del.addEventListener('click',function(e){ e.stopPropagation(); removeScene(scene.id); });
-    item.appendChild(thumb); item.appendChild(nameWrap); item.appendChild(del);
+    item.appendChild(handle); item.appendChild(thumb); item.appendChild(nameWrap); item.appendChild(del);
     item.addEventListener('click',function(){ activateScene(scene.id); });
+
+    // ── Drag-and-drop reordering ──────────────────────────────────
+    item.draggable = true;
+    item.addEventListener('dragstart', function(e){
+      _dragSrcId = scene.id;
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(function(){ item.classList.add('dragging'); }, 0);
+    });
+    item.addEventListener('dragend', function(){
+      item.classList.remove('dragging');
+      $$('.scene-item').forEach(function(el){ el.classList.remove('drag-over'); });
+      _dragSrcId = null;
+    });
+    item.addEventListener('dragover', function(e){
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (_dragSrcId && _dragSrcId !== scene.id) item.classList.add('drag-over');
+    });
+    item.addEventListener('dragleave', function(){
+      item.classList.remove('drag-over');
+    });
+    item.addEventListener('drop', function(e){
+      e.preventDefault();
+      item.classList.remove('drag-over');
+      if (!_dragSrcId || _dragSrcId === scene.id) return;
+
+      // Reorder state.scenes array
+      var fromIdx = state.scenes.findIndex(function(s){ return s.id === _dragSrcId; });
+      var toIdx   = state.scenes.findIndex(function(s){ return s.id === scene.id; });
+      if (fromIdx === -1 || toIdx === -1) return;
+      var moved = state.scenes.splice(fromIdx, 1)[0];
+      state.scenes.splice(toIdx, 0, moved);
+
+      // Reorder DOM to match
+      var list = $('#scene-list');
+      var items = Array.from($$('.scene-item'));
+      var fromEl = items.find(function(el){ return el.dataset.id === _dragSrcId; });
+      var toEl   = items.find(function(el){ return el.dataset.id === scene.id; });
+      if (fromEl && toEl) {
+        if (fromIdx < toIdx) list.insertBefore(fromEl, toEl.nextSibling);
+        else                 list.insertBefore(fromEl, toEl);
+      }
+      updateFirstSceneBadges();
+    });
+
     $('#scene-list').appendChild(item);
     updateFirstSceneBadges();
   }
@@ -683,12 +751,18 @@
 
   // ── Activate scene ─────────────────────────────────────────────────────────
   function activateScene(id, overrideView){
-    var sd=getSceneById(id); if(!sd) return;
+    var sd=getSceneById(id);
+    if(!sd) return;
     $$('.scene-item').forEach(function(el){ el.classList.toggle('active',el.dataset.id===id); });
     state.activeSceneId=id; $('#viewer-empty').hidden=true; $('#viewer-toolbar').hidden=false;
     var viewToUse=overrideView||sd.initialView;
     if(!state.marzScenes[id]){
-      state.marzScenes[id]=createMarzipanoScene(sd, viewToUse);
+      try {
+        state.marzScenes[id]=createMarzipanoScene(sd, viewToUse);
+      } catch(e) {
+        console.error('[activateScene] createMarzipanoScene THREW:', e.message, e.stack);
+        return;
+      }
       sd.hotspots.forEach(function(hs){ attachHotspotToScene(state.marzScenes[id],hs,sd); });
     } else {
       applyViewToScene(sd, state.marzScenes[id], viewToUse);
@@ -840,6 +914,54 @@
     var bi=el('button','btn','Info'); bi.style.flex='1'; bi.addEventListener('click',function(){ startHotspotPlacement('info'); });
     var bl=el('button','btn','Link'); bl.style.flex='1'; bl.addEventListener('click',function(){ startHotspotPlacement('link'); });
     br.appendChild(bi); br.appendChild(bl); pi.appendChild(br);
+
+    // ── Projection section ─────────────────────────────────────────
+    pi.appendChild(el('hr','prop-divider'));
+    pi.appendChild(el('div','prop-section','Projection'));
+
+    var hasSource = !!sd.sourceUrl;
+    if (!hasSource) {
+      var noSrcNote = el('p','');
+      noSrcNote.style.cssText='font-size:12px;color:#666;line-height:1.5;';
+      noSrcNote.textContent='No source image stored. Re-import this image to enable projection switching.';
+      pi.appendChild(noSrcNote);
+    } else {
+      // Current projection label
+      var curProjLabel = sd.projection === 'flat' ? 'Flat' : (sd.fisheyeFov ? 'Fisheye (' + sd.fisheyeFov + '°)' : 'Panorama');
+      var curNote = el('p','');
+      curNote.style.cssText='font-size:12px;color:#888;margin-bottom:8px;';
+      curNote.textContent='Current: ' + curProjLabel + '. Switch to:';
+      pi.appendChild(curNote);
+
+      // 3-button row
+      var projRow = el('div','');
+      projRow.style.cssText='display:flex;gap:6px;';
+
+      function makeProjBtn(label, targetProj) {
+        var isCurrent = (targetProj === 'flat'    && sd.projection === 'flat') ||
+                        (targetProj === 'cube'    && sd.projection === 'cube' && !sd.fisheyeFov) ||
+                        (targetProj === 'fisheye' && sd.projection === 'cube' && !!sd.fisheyeFov);
+        var btn = el('button', isCurrent ? 'btn btn-sm btn-primary' : 'btn btn-sm', label);
+        btn.style.flex = '1';
+        btn.disabled = isCurrent;
+        if (!isCurrent) {
+          btn.addEventListener('click', function(){
+            if (targetProj === 'fisheye') {
+              // Show FOV picker modal before confirming
+              showFovModal(sd);
+            } else {
+              confirmReproject(sd, targetProj, null);
+            }
+          });
+        }
+        return btn;
+      }
+
+      projRow.appendChild(makeProjBtn('Flat', 'flat'));
+      projRow.appendChild(makeProjBtn('Panorama', 'cube'));
+      projRow.appendChild(makeProjBtn('Fisheye', 'fisheye'));
+      pi.appendChild(projRow);
+    }
   }
 
   function renderHotspotList(sd,container){
@@ -999,6 +1121,180 @@
     sd.initialViewSet=true;
     if(sd._updateViewInfo) sd._updateViewInfo();
     var btn=$('#btn-set-view'); btn.textContent='✓ Saved'; setTimeout(function(){ btn.textContent='Set Initial View'; },1500);
+  }
+
+  // ── Projection switching ───────────────────────────────────────────────────
+  var _reprojScene = null;
+  var _reprojTarget = null;
+  var _reprojFov = null;
+
+  var PROJ_LABELS = { flat: 'Flat', cube: 'Panorama', fisheye: 'Fisheye' };
+
+  // ── Fisheye FOV picker ─────────────────────────────────────────────────────
+  var _fovScene = null;
+
+  function showFovModal(sd) {
+    _fovScene = sd;
+    // Pre-fill with existing FOV if already fisheye, otherwise default 180
+    document.getElementById('fov-input').value = sd.fisheyeFov || 180;
+    document.getElementById('fov-modal').hidden = false;
+    setTimeout(function(){ document.getElementById('fov-input').select(); }, 50);
+  }
+
+  document.getElementById('fov-modal-cancel').addEventListener('click', function(){
+    document.getElementById('fov-modal').hidden = true;
+    _fovScene = null;
+  });
+
+  document.getElementById('fov-modal-ok').addEventListener('click', function(){
+    var fov = parseInt(document.getElementById('fov-input').value, 10);
+    if (!fov || fov < 90 || fov > 280) {
+      document.getElementById('fov-input').focus();
+      return;
+    }
+    document.getElementById('fov-modal').hidden = true;
+    if (_fovScene) confirmReproject(_fovScene, 'fisheye', fov);
+    _fovScene = null;
+  });
+
+  document.getElementById('fov-input').addEventListener('keydown', function(e){
+    if (e.key === 'Enter') document.getElementById('fov-modal-ok').click();
+    if (e.key === 'Escape') document.getElementById('fov-modal-cancel').click();
+  });
+
+  function confirmReproject(sd, targetProjection, fisheyeFov) {
+    // If nothing will be lost, skip the confirmation and process immediately
+    var hasHotspots = sd.hotspots && sd.hotspots.length > 0;
+    var hasPlanDot  = !!sd.planDot;
+    if (!hasHotspots && !hasPlanDot) {
+      reprojectScene(sd, targetProjection, fisheyeFov || 180);
+      return;
+    }
+
+    _reprojScene  = sd;
+    _reprojTarget = targetProjection;
+    _reprojFov    = fisheyeFov || 180;
+
+    // Update modal title and description
+    var targetLabel = PROJ_LABELS[targetProjection] || targetProjection;
+    document.querySelector('#reproject-modal h3').textContent = 'Switch to ' + targetLabel + '?';
+    var desc = document.getElementById('reproject-desc');
+    var descriptions = {
+      flat:    'The image will be re-processed as a flat 2D scene.',
+      cube:    'The image will be re-processed as a 360° equirectangular panorama.',
+      fisheye: 'The image will be re-processed as a fisheye hemisphere (FOV: ' + _reprojFov + '°).'
+    };
+    desc.textContent = descriptions[targetProjection] || '';
+
+    // Build loss list
+    var losses = [];
+    var infoCount = sd.hotspots.filter(function(h){ return h.type==='info'; }).length;
+    var linkCount = sd.hotspots.filter(function(h){ return h.type==='link'; }).length;
+    if (infoCount) losses.push(infoCount + ' info hotspot' + (infoCount>1?'s':''));
+    if (linkCount) losses.push(linkCount + ' link hotspot' + (linkCount>1?'s':''));
+    if (hasPlanDot) losses.push('floor plan dot position');
+
+    var list = document.getElementById('reproject-loss-list');
+    list.innerHTML = '';
+    losses.forEach(function(txt){
+      var li = document.createElement('li'); li.textContent = txt; list.appendChild(li);
+    });
+    document.getElementById('reproject-modal').hidden = false;
+  }
+
+  document.getElementById('reproject-cancel').addEventListener('click', function(){
+    document.getElementById('reproject-modal').hidden = true;
+    _reprojScene = _reprojTarget = _reprojFov = null;
+  });
+
+  document.getElementById('reproject-confirm').addEventListener('click', function(){
+    document.getElementById('reproject-modal').hidden = true;
+    if (_reprojScene) reprojectScene(_reprojScene, _reprojTarget, _reprojFov);
+    _reprojScene = _reprojTarget = _reprojFov = null;
+  });
+
+  function reprojectScene(sd, targetProjection, fisheyeFov) {
+    var modal = document.getElementById('processing-modal');
+    var label = document.getElementById('processing-label');
+    var fill  = document.getElementById('progress-fill');
+    var targetLabel = PROJ_LABELS[targetProjection] || targetProjection;
+    modal.hidden = false;
+    label.textContent = 'Re-processing as ' + targetLabel + '…';
+    fill.style.width = '10%';
+
+    var iv = setInterval(function(){
+      var c = parseFloat(fill.style.width) || 10;
+      if (c < 75) fill.style.width = (c + Math.random() * 3) + '%';
+    }, 400);
+
+    var body = { projection: targetProjection };
+    if (targetProjection === 'fisheye') body.fisheyeFov = fisheyeFov || 180;
+
+    fetch('/api/reprocess/' + sd.id, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(result){
+        clearInterval(iv);
+        if (result.error) throw new Error(result.error);
+        fill.style.width = '90%';
+
+        setTimeout(function(){
+          // Tear down old Marzipano scene
+          var oldMs = state.marzScenes[sd.id];
+          if (oldMs) { try { state.marzViewer.destroyScene(oldMs); } catch(e){} }
+          delete state.marzScenes[sd.id];
+
+          // Update scene data in-place — id stays the same (reprocess reuses it)
+          // Use explicit assignment for every field — don't rely on || fallbacks
+          // since old values (e.g. undefined levels on a flat scene) could mask errors
+          if (result.levels   !== undefined) sd.levels   = result.levels;
+          if (result.faceSize !== undefined) sd.faceSize = result.faceSize;
+          sd.previewUrl  = (result.previewUrl  || sd.previewUrl) + '?t=' + Date.now();
+          sd.sourceUrl   = result.sourceUrl   || sd.sourceUrl;
+          sd.isPano      = !!result.isPano;
+          sd.projection  = result.projection  || (targetProjection === 'flat' ? 'flat' : 'cube');
+          sd.flat        = result.flat        || null;
+          sd.fisheyeFov  = targetProjection === 'fisheye' ? (fisheyeFov || 180) : null;
+          sd.hotspots    = [];
+          sd.planDot     = null;
+          sd.initialView = result.suggestedInitialView ||
+            (targetProjection === 'flat' ? { x:0.5, y:0.5, zoom:1 } : { yaw:0, pitch:0, fov:1.5707963 });
+          sd.initialViewSet = false;
+
+          // Validate cube scene has required fields before activating
+          if (sd.projection === 'cube' && (!sd.levels || !sd.levels.length || !sd.faceSize)) {
+            modal.hidden = true; fill.style.width = '0%';
+            alert('Re-processing returned incomplete data. Please try again.');
+            return;
+          }
+
+          // Update sidebar thumbnail
+          var item = document.querySelector('#scene-list [data-id="' + sd.id + '"]');
+          if (item) {
+            var thumb = item.querySelector('.scene-thumb');
+            if (thumb) thumb.src = sd.previewUrl;
+          }
+
+          fill.style.width = '100%';
+          modal.hidden = true; fill.style.width = '0%';
+
+          try {
+            activateScene(sd.id);
+          } catch(e) {
+            console.error('activateScene after reproject:', e);
+            alert('Scene re-processed but could not be displayed: ' + e.message);
+          }
+          updatePreviewOverlay();
+        }, 200);
+      })
+      .catch(function(err){
+        clearInterval(iv);
+        modal.hidden = true; fill.style.width = '0%';
+        alert('Re-processing failed: ' + err.message);
+      });
   }
 
   // ── Preview overlay ────────────────────────────────────────────────────────
