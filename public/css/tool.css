@@ -77,6 +77,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .scene-first-badge{font-size:11px;color:#f0c040;flex-shrink:0;}
 .scene-del{opacity:0;background:none;border:none;color:#e94560;cursor:pointer;font-size:15px;padding:2px 4px;border-radius:3px;flex-shrink:0;}
 .scene-item:hover .scene-del{opacity:1;}
+.scene-drag-handle{color:#444;cursor:grab;font-size:14px;padding:0 2px;flex-shrink:0;user-select:none;line-height:1;}
+.scene-drag-handle:active{cursor:grabbing;}
+.scene-item.dragging{opacity:0.4;}
+.scene-item.drag-over{border-color:#e94560;background:rgba(233,69,96,0.15);}
 
 /* ── Viewer Area ─────────────────────────────────────────────────── */
 .viewer-area{position:relative;overflow:hidden;background:#0a0a1a;}
