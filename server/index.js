@@ -5,6 +5,7 @@ const sharp      = require('sharp');
 const heicConvert = require('heic-convert');
 const path       = require('path');
 const fs         = require('fs');
+const https      = require('https');
 const { v4: uuidv4 } = require('uuid');
 
 const app  = express();
@@ -12,12 +13,47 @@ const PORT = process.env.PORT || 3000;
 const PREVIEW_TTL_MS = 60 * 60 * 1000;
 const previewSessions = new Map();
 
-const UPLOAD_DIR   = path.join(__dirname, '../tmp/uploads');
-const TILES_DIR    = path.join(__dirname, '../tmp/tiles');
-const PROJECTS_DIR = path.join(__dirname, '../tmp/projects');
+const UPLOAD_DIR     = path.join(__dirname, '../tmp/uploads');
+const TILES_DIR      = path.join(__dirname, '../tmp/tiles');
+const PROJECTS_DIR   = path.join(__dirname, '../tmp/projects');
+const MARZIPANO_PATH = path.join(__dirname, '../public/js/marzipano.js');
+const MARZIPANO_CDN  = 'https://cdn.jsdelivr.net/npm/marzipano@0.10.2/dist/marzipano.js';
+
 fs.mkdirSync(UPLOAD_DIR,   { recursive: true });
 fs.mkdirSync(TILES_DIR,    { recursive: true });
 fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+fs.mkdirSync(path.dirname(MARZIPANO_PATH), { recursive: true });
+
+// ── Download Marzipano locally on first run ───────────────────────────────────
+function ensureMarzipano() {
+  return new Promise((resolve) => {
+    if (fs.existsSync(MARZIPANO_PATH)) {
+      console.log('Marzipano already cached at', MARZIPANO_PATH);
+      return resolve(true);
+    }
+    console.log('Downloading Marzipano from CDN…');
+    const file = fs.createWriteStream(MARZIPANO_PATH);
+    https.get(MARZIPANO_CDN, (res) => {
+      if (res.statusCode !== 200) {
+        file.close();
+        try { fs.unlinkSync(MARZIPANO_PATH); } catch(e) {}
+        console.warn(`Marzipano download failed (HTTP ${res.statusCode}) — will use CDN fallback`);
+        return resolve(false);
+      }
+      res.pipe(file);
+      file.on('finish', () => {
+        file.close();
+        console.log('Marzipano cached locally at', MARZIPANO_PATH);
+        resolve(true);
+      });
+    }).on('error', (err) => {
+      file.close();
+      try { fs.unlinkSync(MARZIPANO_PATH); } catch(e) {}
+      console.warn('Marzipano download error:', err.message, '— will use CDN fallback');
+      resolve(false);
+    });
+  });
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
@@ -77,42 +113,87 @@ async function processImage(req, res, sceneId, outDir, imgPath) {
       fileBuffer = Buffer.from(jpegBuffer);
     }
 
+    // ── Save original as source.jpg for future re-processing ───────────────
+    const sourcePath = path.join(outDir, 'source.jpg');
+    if (!fs.existsSync(sourcePath)) {
+      // Convert to JPEG if needed (PNG, TIFF, etc.) and save at full quality
+      await sharp(fileBuffer).jpeg({ quality: 95 }).toFile(sourcePath);
+      console.log(`Source saved: ${sourcePath}`);
+    }
+
     const meta = await sharp(fileBuffer).metadata();
     const { width, height } = meta;
     if (!width || !height) throw new Error('Could not read image dimensions');
     console.log(`Processing: ${req.file.originalname} (${width}x${height}, ${meta.format})`);
 
-    // ── Equirectangular detection ──────────────────────────────────────────
+    // ── Projection mode detection ──────────────────────────────────────────
     const ratio = width / height;
-    // Check asFlat from form body (multer populates req.body with text fields)
-    const forcedFlat = !!(req.body && (req.body.asFlat === '1' || req.body.asFlat === 1 || req.body.asFlat === true));
-    console.log('asFlat flag:', forcedFlat, '| body.asFlat:', req.body && req.body.asFlat);
-    const isPano = !forcedFlat && ratio >= 1.7 && ratio <= 2.4;
+    const forcedFlat    = !!(req.body && (req.body.asFlat    === '1' || req.body.asFlat    === 1 || req.body.asFlat    === true));
+    const forcedPano    = !!(req.body && (req.body.asPano    === '1' || req.body.asPano    === 1 || req.body.asPano    === true));
+    const forcedFisheye = !!(req.body && (req.body.asFisheye === '1' || req.body.asFisheye === 1 || req.body.asFisheye === true));
+    const fisheyeFov    = forcedFisheye ? (parseFloat(req.body.fisheyeFov) || 180) : 180;
+    if (forcedPano)    console.log('asPano flag set — forcing panorama projection');
+    if (forcedFisheye) console.log(`asFisheye flag set — FOV=${fisheyeFov}°`);
+    const isPano    = forcedPano    || (!forcedFlat && !forcedFisheye && ratio >= 1.9 && ratio <= 2.15);
+    const isFisheye = forcedFisheye || false;
 
-    if (isPano) {
+    if (isPano || isFisheye) {
       let processBuffer;
-      // Pano: downsample if very large to keep processing time reasonable
       const maxW = 8192;
       if (width > maxW) {
         processBuffer = await sharp(fileBuffer)
           .resize(maxW, Math.round(maxW / 2))
           .jpeg({ quality: 92 })
           .toBuffer();
-        console.log(`Pano downsampled to ${maxW}x${Math.round(maxW/2)}`);
+        console.log(`Downsampled to ${maxW}x${Math.round(maxW/2)}`);
       } else {
         processBuffer = fileBuffer;
       }
 
-      const pm      = await sharp(processBuffer).metadata();
-      const pw      = pm.width, ph = pm.height;
+      // ── Pad to correct aspect ratio ──────────────────────────────────────
+      // Panorama needs 2:1 (equirectangular), fisheye needs 1:1 (square circle).
+      // If the image isn't already the right ratio, pad with black so the
+      // projection math works correctly and the image sits centered.
+      {
+        const pm0 = await sharp(processBuffer).metadata();
+        const pw0 = pm0.width, ph0 = pm0.height;
+        const currentRatio = pw0 / ph0;
+        const targetRatio  = isFisheye ? 1.0 : 2.0;
+        const tolerance    = 0.05;
+
+        if (Math.abs(currentRatio - targetRatio) > tolerance) {
+          let padW, padH;
+          if (currentRatio < targetRatio) {
+            // Too tall — add black left/right
+            padH = ph0;
+            padW = Math.round(ph0 * targetRatio);
+          } else {
+            // Too wide — add black top/bottom
+            padW = pw0;
+            padH = Math.round(pw0 / targetRatio);
+          }
+          const left = Math.round((padW - pw0) / 2);
+          const top  = Math.round((padH - ph0) / 2);
+          console.log(`Padding ${pw0}x${ph0} → ${padW}x${padH} (${isFisheye?'1:1':'2:1'} for ${isFisheye?'fisheye':'panorama'})`);
+          processBuffer = await sharp(processBuffer)
+            .extend({ top, bottom: padH - ph0 - top, left, right: padW - pw0 - left,
+                      background: { r:0, g:0, b:0, alpha:1 } })
+            .jpeg({ quality: 92 })
+            .toBuffer();
+        }
+      }
+
+      const pm  = await sharp(processBuffer).metadata();
+      const pw  = pm.width, ph = pm.height;
       const faceSize = Math.max(64, Math.min(Math.floor(ph / 2), 2048));
       const levels   = generateLevels(faceSize);
-      console.log(`faceSize=${faceSize}, levels=${levels.length}`);
+      const finalSize = levels[levels.length - 1].size;
+      console.log(`faceSize=${faceSize}, finalSize=${finalSize}, levels=${levels.length}`);
 
-      // Load raw RGBA pixels once — downsample to 4096 wide max for memory safety
-      const rawMaxW  = Math.min(pw, 4096);
-      const rawMaxH  = Math.round(rawMaxW / 2);
-      const rawBuf   = (rawMaxW < pw)
+      // Load raw RGBA pixels — downsample to 4096 wide max for memory safety
+      const rawMaxW = Math.min(pw, 4096);
+      const rawMaxH = Math.round(rawMaxW * ph / pw);  // preserve actual aspect ratio
+      const rawBuf  = (rawMaxW < pw)
         ? await sharp(processBuffer).resize(rawMaxW, rawMaxH).raw().ensureAlpha(0).toBuffer({ resolveWithObject: true })
         : await sharp(processBuffer).raw().ensureAlpha(0).toBuffer({ resolveWithObject: true });
       const { data: srcData, info } = rawBuf;
@@ -128,7 +209,9 @@ async function processImage(req, res, sceneId, outDir, imgPath) {
         for (const face of faceNames) {
           const faceDir = path.join(outDir, String(level.z), face);
           fs.mkdirSync(faceDir, { recursive: true });
-          const facePixels = projectCubeFace(srcData, sw, sh, face, size);
+          const facePixels = isFisheye
+            ? projectFisheyeFace(srcData, sw, sh, face, size, fisheyeFov)
+            : projectCubeFace(srcData, sw, sh, face, size);
 
           for (let row = 0; row < numTiles; row++) {
             const rowDir = path.join(faceDir, String(row));
@@ -150,24 +233,26 @@ async function processImage(req, res, sceneId, outDir, imgPath) {
         .toFile(path.join(outDir, 'preview.jpg'));
 
       try { fs.unlinkSync(imgPath); } catch(e) {}
-      console.log(`Done: ${sceneId} (pano)`);
+      const projLabel = isFisheye ? 'fisheye' : 'pano';
+      console.log(`Done: ${sceneId} (${projLabel})`);
 
       res.json({
         sceneId,
         isPano: true,
         projection: 'cube',
         levels: levels.map(l => ({ tileSize: l.tileSize, size: l.size })),
-        faceSize,
+        faceSize: finalSize,
         previewUrl: `/tiles/${sceneId}/preview.jpg`,
+        sourceUrl:  `/tiles/${sceneId}/source.jpg`,
         suggestedInitialView: { yaw: 0, pitch: 0, fov: 1.5707963 }
       });
       return;
     }
 
-    // True flat scene path: no 2:1 white canvas, no cube projection.
+    // ── Flat scene path ────────────────────────────────────────────────────
     const MAX_FLAT = 4096;
-    const flatScale = Math.min(1, MAX_FLAT / Math.max(width, height));
-    const flatWidth = Math.max(1, Math.round(width * flatScale));
+    const flatScale  = Math.min(1, MAX_FLAT / Math.max(width, height));
+    const flatWidth  = Math.max(1, Math.round(width  * flatScale));
     const flatHeight = Math.max(1, Math.round(height * flatScale));
     console.log(`Flat scene: ${flatWidth}x${flatHeight}`);
 
@@ -189,10 +274,11 @@ async function processImage(req, res, sceneId, outDir, imgPath) {
       isPano: false,
       projection: 'flat',
       previewUrl: `/tiles/${sceneId}/preview.jpg`,
+      sourceUrl:  `/tiles/${sceneId}/source.jpg`,
       flat: {
-        width: flatWidth,
+        width:  flatWidth,
         height: flatHeight,
-        url: `/tiles/${sceneId}/flat.jpg`
+        url:    `/tiles/${sceneId}/flat.jpg`
       },
       suggestedInitialView: { x: 0.5, y: 0.5, zoom: 1 }
     });
@@ -320,8 +406,22 @@ app.post('/api/export', async (req, res) => {
   archive.append(generateViewerHTML(scenes, settings), { name: 'index.html' });
   archive.append(generateAppJS(scenes, settings),      { name: 'app.js' });
   archive.append(generateAppCSS(),                     { name: 'style.css' });
-  archive.append(generateReadme(settings),             { name: 'README.txt' });
-  archive.append(JSON.stringify({ version: 1, settings, scenes }, null, 2), { name: 'project.json' });
+  archive.append(generateReadme(settings, scenes),     { name: 'README.txt' });
+  archive.append(JSON.stringify({
+    version: 1,
+    exportedWith: 'PanoPath by illerin v0.5.8',
+    exportedAt: new Date().toISOString(),
+    settings,
+    scenes
+  }, null, 2), { name: 'project.json' });
+
+  // Bundle Marzipano locally so the export works fully offline
+  if (fs.existsSync(MARZIPANO_PATH)) {
+    archive.file(MARZIPANO_PATH, { name: 'marzipano.js' });
+  } else {
+    // Fallback: rewrite the script tag to CDN so the export still works
+    console.warn('marzipano.js not cached — export will reference CDN');
+  }
 
   if (settings.logoData) {
     const m = settings.logoData.match(/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,(.+)$/);
@@ -417,6 +517,14 @@ app.get('/preview/:id/view', (req, res) => {
   let appJs = generateAppJS(scenes, settings);
 
   html = html.replace('<link rel="stylesheet" href="style.css">', `<style>${css}</style>`);
+  // Inline Marzipano so the preview works without a relative file path
+  if (fs.existsSync(MARZIPANO_PATH)) {
+    const marzipanoJs = fs.readFileSync(MARZIPANO_PATH, 'utf8');
+    html = html.replace('<script src="marzipano.js"></script>', `<script>${marzipanoJs}</script>`);
+  } else {
+    // Fall back to CDN if local copy isn't available yet
+    html = html.replace('<script src="marzipano.js"></script>', `<script src="https://cdn.jsdelivr.net/npm/marzipano@0.10.2/dist/marzipano.js"></script>`);
+  }
   // In preview mode, viewer runs under /preview/:id/view, so tile paths must be absolute.
   appJs = appJs.replace(/'tiles\//g, "'/tiles/");
   appJs = appJs.replace(/<\/script/gi, '<\\/script');
@@ -433,6 +541,70 @@ app.delete('/api/scene/:id', (req, res) => {
   const d = path.join(TILES_DIR, req.params.id);
   if (fs.existsSync(d)) fs.rmSync(d, { recursive: true });
   res.json({ ok: true });
+});
+
+// ── Reprocess existing scene with a different projection ─────────────────────
+app.post('/api/reprocess/:id', async (req, res) => {
+  const sceneId = req.params.id;
+  const outDir  = path.join(TILES_DIR, sceneId);
+  const sourcePath = path.join(outDir, 'source.jpg');
+
+  if (!fs.existsSync(sourcePath)) {
+    return res.status(404).json({ error: 'No source image found for this scene. Re-import the original file to enable projection switching.' });
+  }
+
+  const { projection, fisheyeFov } = req.body || {};
+  if (!['flat', 'cube', 'fisheye'].includes(projection)) {
+    return res.status(400).json({ error: 'projection must be flat, cube, or fisheye' });
+  }
+
+  // Clean out old tiles/flat but keep source.jpg
+  try {
+    const entries = fs.readdirSync(outDir);
+    for (const entry of entries) {
+      if (entry === 'source.jpg') continue;
+      const p = path.join(outDir, entry);
+      const stat = fs.statSync(p);
+      if (stat.isDirectory()) fs.rmSync(p, { recursive: true });
+      else fs.unlinkSync(p);
+    }
+  } catch(e) {
+    console.error('Reprocess cleanup error:', e);
+  }
+
+  // Build a fake req/res-compatible call by re-using processImage with a synthetic req
+  const fakeReq = {
+    file: { path: sourcePath, originalname: 'source.jpg', mimetype: 'image/jpeg' },
+    body: {
+      asPano:    projection === 'cube'    ? '1' : '0',
+      asFisheye: projection === 'fisheye' ? '1' : '0',
+      asFlat:    projection === 'flat'    ? '1' : '0',
+      fisheyeFov: fisheyeFov || '180'
+    }
+  };
+
+  // processImage deletes imgPath — we must NOT delete source.jpg, so give it a temp copy
+  const tmpCopy = path.join(outDir, '_reprocess_tmp.jpg');
+  fs.copyFileSync(sourcePath, tmpCopy);
+  fakeReq.file.path = tmpCopy;
+
+  // Use a custom sceneId so processImage writes into the existing outDir
+  // We intercept res.json to capture the result
+  let responded = false;
+  const fakeRes = {
+    json(data) {
+      responded = true;
+      if (data && data.sceneId) data.sceneId = sceneId;
+      res.json(data);
+    },
+    status(code) { return { json(data){ responded=true; res.status(code).json(data); } }; }
+  };
+
+  try {
+    await processImage(fakeReq, fakeRes, sceneId, outDir, tmpCopy);
+  } catch(err) {
+    if (!responded) res.status(500).json({ error: 'Reprocess failed: ' + err.message });
+  }
 });
 
 // ── Cube face projection ──────────────────────────────────────────────────────
@@ -471,16 +643,94 @@ function projectCubeFace(srcData, sw, sh, face, outSize) {
   return pixels;
 }
 
+// ── Fisheye (equidistant) → cube face projection ──────────────────────────────
+// Projects a circular fisheye image (equidistant model) onto a cube face.
+// fisheyeFovDeg: total field of view of the lens in degrees (typically 180).
+// The fisheye circle is assumed to be centered in the image with radius = min(sw,sh)/2.
+function projectFisheyeFace(srcData, sw, sh, face, outSize, fisheyeFovDeg) {
+  const pixels = Buffer.alloc(outSize * outSize * 3);
+  const fovRad = (fisheyeFovDeg * Math.PI) / 180;
+  const cx = sw / 2, cy = sh / 2;
+  const radius = Math.min(sw, sh) / 2; // fisheye circle radius in pixels
+
+  for (let j = 0; j < outSize; j++) {
+    for (let i = 0; i < outSize; i++) {
+      const u = (2 * (i + 0.5) / outSize) - 1;
+      const v = (2 * (j + 0.5) / outSize) - 1;
+      let dx, dy, dz;
+      switch (face) {
+        case 'f': dx= u; dy=-v; dz= 1; break;
+        case 'b': dx=-u; dy=-v; dz=-1; break;
+        case 'r': dx= 1; dy=-v; dz=-u; break;
+        case 'l': dx=-1; dy=-v; dz= u; break;
+        case 'u': dx= u; dy= 1; dz= v; break;
+        case 'd': dx= u; dy=-1; dz=-v; break;
+      }
+      const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      const nx = dx/len, ny = dy/len, nz = dz/len;
+
+      // Spherical coords
+      const lat = Math.asin(Math.max(-1, Math.min(1, ny)));   // elevation
+      const lon = Math.atan2(nx, nz);                          // azimuth
+
+      // Angle from optical axis (straight ahead = nz>0 hemisphere)
+      // For a fisheye we map the full sphere but pixels outside the FOV cone go black
+      const theta = Math.acos(Math.max(-1, Math.min(1, nz)));  // angle from forward axis
+
+      const d = outSize * outSize * 3;
+      if (theta > fovRad / 2) {
+        // Outside lens FOV — write black
+        pixels[(j * outSize + i) * 3 + 0] = 0;
+        pixels[(j * outSize + i) * 3 + 1] = 0;
+        pixels[(j * outSize + i) * 3 + 2] = 0;
+        continue;
+      }
+
+      // Equidistant projection: r = f * theta, where f = radius / (fovRad/2)
+      const r = radius * (theta / (fovRad / 2));
+      // Direction in the image plane (azimuth around forward axis)
+      const phi = Math.atan2(ny, nx);  // angle in the plane perpendicular to forward
+      const srcX = cx + r * Math.cos(phi);
+      const srcY = cy - r * Math.sin(phi);
+
+      // Bilinear sample
+      const x0 = Math.max(0, Math.min(sw - 1, Math.floor(srcX)));
+      const y0 = Math.max(0, Math.min(sh - 1, Math.floor(srcY)));
+      const x1 = Math.min(sw - 1, x0 + 1);
+      const y1 = Math.min(sh - 1, y0 + 1);
+      const fx = srcX - Math.floor(srcX);
+      const fy = srcY - Math.floor(srcY);
+      const p = (j * outSize + i) * 3;
+      for (let c = 0; c < 3; c++) {
+        const tl = srcData[(y0*sw+x0)*4+c], tr = srcData[(y0*sw+x1)*4+c];
+        const bl = srcData[(y1*sw+x0)*4+c], br = srcData[(y1*sw+x1)*4+c];
+        pixels[p+c] = Math.round(tl*(1-fx)*(1-fy) + tr*fx*(1-fy) + bl*(1-fx)*fy + br*fx*fy);
+      }
+    }
+  }
+  return pixels;
+}
+
 function generateLevels(faceSize) {
   faceSize = Math.max(64, faceSize);
-  const levels=[]; let z=0, size=256;
-  while (size<=faceSize*2) {
-    levels.push({z, tileSize:Math.min(512,size), size:Math.min(size,faceSize)});
-    size*=2; z++;
-    if (size>faceSize) { levels.push({z, tileSize:512, size:faceSize}); break; }
+  const TILE = 512;
+  const levels = [];
+  let z = 0, size = 256;
+  // Build levels doubling up until we reach or exceed faceSize
+  while (size < faceSize) {
+    const tileSize = Math.min(TILE, size);
+    levels.push({ z, tileSize, size });
+    size *= 2;
+    z++;
   }
-  if (!levels.length) levels.push({z:0,tileSize:512,size:faceSize});
-  return levels.slice(0,6);
+  // Final level: use the current power-of-2 size (which is >= faceSize).
+  // This satisfies ALL Marzipano constraints:
+  //   size % tileSize === 0  (power of 2 is always a multiple of 512)
+  //   size % parentSize === 0  (each level doubles the previous)
+  // We cap at 4096 to avoid excessive memory use for very large images.
+  const finalSize = Math.min(size, 4096);
+  levels.push({ z, tileSize: TILE, size: finalSize });
+  return levels.slice(0, 6);
 }
 
 // ── Viewer templates ──────────────────────────────────────────────────────────
@@ -548,7 +798,7 @@ function generateViewerHTML(scenes, settings) {
       </svg>
     </div>` : ''}
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/marzipano@0.10.2/dist/marzipano.js"></script>
+  <script src="marzipano.js"></script>
   <script src="app.js"></script>
 </body>
 </html>`;
@@ -571,7 +821,9 @@ function generateAppJS(scenes, settings) {
     compassEnabled:s.compassEnabled !== false,
     northOffset:s.northOffset||0,
     projection:s.projection || (s.isPano===false ? 'flat' : 'cube'),
-    flat:s.flat || null
+    flat:s.flat || null,
+    sourceUrl:s.sourceUrl || null,
+    fisheyeFov:s.fisheyeFov || null
   })),null,2);
 
   return `(function(){
@@ -911,8 +1163,30 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 .hs-label-expanded{white-space:normal;overflow:visible;text-overflow:unset;max-width:260px;}`;
 }
 
-function generateReadme(settings){
-  return `Panorama Tour\n=============\nTitle: ${settings.title||'Panorama Tour'}\nGenerated: ${new Date().toISOString()}\n\nUpload all files to any static web server and open index.html.\nFor offline use replace the marzipano CDN script with a local copy:\n  https://cdn.jsdelivr.net/npm/marzipano@0.10.2/dist/marzipano.js\n`;
+function generateReadme(settings, scenes){
+  const APP_VERSION = '0.5.8';
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
+  const timeStr = now.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+  const sceneList = (scenes||[]).map((s,i) => `  ${i+1}. ${s.name||('Scene '+(i+1))}`).join('\n');
+  return [
+    'PanoPath by illerin',
+    '===================',
+    `Version:   ${APP_VERSION}`,
+    `Title:     ${settings.title||'Panorama Tour'}`,
+    `Exported:  ${dateStr} at ${timeStr}`,
+    `Scenes:    ${(scenes||[]).length}`,
+    sceneList,
+    '',
+    'Hosting',
+    '-------',
+    'Upload all files to any static web server and open index.html.',
+    'All assets including marzipano.js are bundled — no internet connection required.',
+    '',
+    'Re-editing',
+    '----------',
+    'Import the ZIP back into PanoPath using Project → Import ZIP to continue editing.',
+  ].join('\n');
 }
 
 function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -923,4 +1197,6 @@ function safeUrl(s){
   return'https://'+s;
 }
 
-app.listen(PORT,()=>console.log(`PanoPath Local Tool running on http://localhost:${PORT}`));
+ensureMarzipano().then(() => {
+  app.listen(PORT, () => console.log(`PanoPath Local Tool running on http://localhost:${PORT}`));
+});
