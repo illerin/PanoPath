@@ -16,4 +16,4 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           push: true
-          tags: illerin/PanoPath:latest
+          tags: illerin/panopath:latest
