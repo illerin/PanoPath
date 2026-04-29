@@ -35,7 +35,7 @@
 <div class="modal-bg" id="appearance-panel" hidden>
   <div class="settings-modal">
     <div class="settings-modal-header">
-      <span>Settings <span class="settings-version">v0.5.4</span></span>
+      <span>Settings <span class="settings-version">v0.5.8</span></span>
       <button class="panel-close" id="appearance-close" title="Close"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
 
@@ -371,6 +371,39 @@
   </div>
 </div>
 
+<!-- Fisheye FOV picker modal -->
+<div class="modal-bg" id="fov-modal" hidden>
+  <div class="modal" style="max-width:320px">
+    <h3>Fisheye Field of View</h3>
+    <p style="font-size:13px;color:#aaa;text-align:center">Enter the lens FOV in degrees.<br>Most fisheye lenses are 180°.</p>
+    <div style="display:flex;align-items:center;gap:8px;width:100%;justify-content:center;margin-top:4px;">
+      <input type="number" id="fov-input" class="prop-input" min="90" max="280" step="1" value="180" style="width:90px;text-align:center;font-size:18px;font-weight:600;">
+      <span style="font-size:18px;color:#aaa;">°</span>
+    </div>
+    <p style="font-size:11px;color:#555;text-align:center;margin-top:4px;">Range: 90° – 280°</p>
+    <div style="display:flex;gap:10px;width:100%;margin-top:4px;">
+      <button class="btn" id="fov-modal-cancel" style="flex:1">Cancel</button>
+      <button class="btn btn-primary" id="fov-modal-ok" style="flex:1">Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reproject confirmation modal -->
+<div class="modal-bg" id="reproject-modal" hidden>
+  <div class="modal" style="max-width:400px">
+    <div class="modal-icon"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#f0a500" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></div>
+    <h3>Switch Projection?</h3>
+    <p id="reproject-desc"></p>
+    <p style="margin-top:8px">The following will be permanently lost:</p>
+    <ul id="reproject-loss-list" style="text-align:left;font-size:13px;color:#e94560;margin:4px 0 0 0;padding-left:20px;line-height:1.8;list-style:disc;width:100%"></ul>
+    <p style="margin-top:8px;font-size:12px;color:#777">The initial view and north offset will also be reset.</p>
+    <div style="display:flex;gap:10px;margin-top:4px;width:100%">
+      <button class="btn" id="reproject-cancel" style="flex:1">Cancel</button>
+      <button class="btn btn-primary" id="reproject-confirm" style="flex:1">Re-process</button>
+    </div>
+  </div>
+</div>
+
 <!-- Export success -->
 <div class="modal-bg" id="export-modal" hidden>
   <div class="modal">
@@ -382,7 +415,7 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/marzipano@0.10.2/dist/marzipano.js"></script>
+<script src="js/marzipano.js" onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/marzipano@0.10.2/dist/marzipano.js';document.head.appendChild(s)"></script>
 <script src="js/tool.js"></script>
 </body>
 </html>
