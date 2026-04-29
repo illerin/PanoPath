@@ -8,7 +8,7 @@ A self-hosted Docker tool for building interactive 360° panorama tours. Upload 
 ## Features
 
 - Upload equirectangular panoramas (JPG, PNG, HEIC/HEIF, TIFF, WebP)
-- Non-panorama images are supported — padded onto a white canvas automatically
+- Non-panorama images are supported
 - Multi-resolution cube face tiling (server-side, no GPU required)
 - Info hotspots (click to expand text) and link hotspots (navigate between scenes)
 - 7 link hotspot icon styles (camera, arrow, door, star, eye, location) with fully customisable colours
