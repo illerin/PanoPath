@@ -22,6 +22,8 @@ A self-hosted Docker tool for building interactive 360° panorama tours. Upload 
 - Save and load projects from the server, or import via ZIP
 - Fully local — no cloud uploads, no accounts
 
+<img width="2560" height="1274" alt="PanoPath Landing page" src="https://github.com/user-attachments/assets/198e0c75-273b-4882-a283-037c9d6010a6" />
+
 ## Quick Start
 
 No clone or build needed — pull the image directly from Docker Hub:
