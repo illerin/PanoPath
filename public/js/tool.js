@@ -176,7 +176,6 @@
       sel.appendChild(opt);
     });
   }
-  }
 
   function collectPresetData(){
     return {
