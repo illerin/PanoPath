@@ -806,7 +806,11 @@ function generateViewerHTML(scenes, settings) {
 
 function generateAppJS(scenes, settings) {
   const scenesJson = JSON.stringify(scenes.map(s=>({
-    id:s.id, name:s.name, levels:s.levels, faceSize:s.faceSize,
+    id:s.id, name:s.name,
+    // Always recalculate levels from faceSize so stale or missing stored levels
+    // never cause z-folder mismatches in the exported viewer.
+    levels: (s.faceSize && s.projection !== 'flat') ? generateLevels(s.faceSize).map(l=>({tileSize:l.tileSize,size:l.size})) : s.levels,
+    faceSize:s.faceSize,
     initialView:s.initialView||{yaw:0,pitch:0,fov:1.5707963},
     hotspots:(s.hotspots||[]).map(h => {
       if ((s.projection === 'flat' || s.isPano === false) && h) {
