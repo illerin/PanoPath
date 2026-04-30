@@ -116,14 +116,56 @@
     });
   }
 
-  function readPresets(){
-    try { return JSON.parse(localStorage.getItem(PRESET_STORAGE_KEY) || '[]'); }
-    catch(e){ return []; }
+  var PRESET_STORAGE_KEY = 'panopath-style-presets-v1';
+
+  // ── Presets — server-backed ────────────────────────────────────────────────
+  // In-memory cache so reads are synchronous after the initial fetch
+  var _presetsCache = null;
+
+  function loadPresetsFromServer(cb) {
+    fetch('/api/presets')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        _presetsCache = data.presets || [];
+        // One-time migration: if localStorage has presets and server has none, migrate them
+        if (_presetsCache.length === 0) {
+          try {
+            var local = JSON.parse(localStorage.getItem(PRESET_STORAGE_KEY) || '[]');
+            if (local.length > 0) {
+              _presetsCache = local;
+              savePresetsToServer(_presetsCache, function(){
+                localStorage.removeItem(PRESET_STORAGE_KEY);
+                console.log('Migrated ' + local.length + ' preset(s) from localStorage to server.');
+              });
+            }
+          } catch(e) {}
+        }
+        if (cb) cb(_presetsCache);
+      })
+      .catch(function(){ _presetsCache = _presetsCache || []; if (cb) cb(_presetsCache); });
   }
-  function writePresets(presets){
-    localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(presets));
+
+  function savePresetsToServer(presets, cb) {
+    fetch('/api/presets', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ presets: presets })
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(){ if (cb) cb(); })
+      .catch(function(e){ console.error('Failed to save presets:', e); });
   }
-  function populatePresetSelect(selectedName){
+
+  function readPresets() {
+    return _presetsCache || [];
+  }
+
+  function writePresets(presets, cb) {
+    _presetsCache = presets;
+    savePresetsToServer(presets, cb);
+  }
+
+  function populatePresetSelect(selectedName) {
     var sel=$('#preset-select'); if(!sel) return;
     var presets=readPresets();
     sel.innerHTML='<option value="">— select preset —</option>';
@@ -133,6 +175,7 @@
       if(selectedName && selectedName===p.name) opt.selected=true;
       sel.appendChild(opt);
     });
+  }
   }
 
   function collectPresetData(){
@@ -354,7 +397,8 @@
 
   $('#floor-plan-btn').addEventListener('click', function(){ $('#plan-panel').hidden ? openPanel('plan-panel') : closeAllPanels(); });
   $('#plan-close').addEventListener('click', closeAllPanels);
-  populatePresetSelect();
+  // Load presets from server on startup (migrates localStorage presets automatically)
+  loadPresetsFromServer(function(){ populatePresetSelect(); });
   syncHotspotColorInputs();
   $('#setting-compass').addEventListener('change', function(){
     var curSd=getActiveScene(); if(curSd) renderProps(curSd);
@@ -432,8 +476,9 @@
     var presets=readPresets().filter(function(p){ return p.name!==name; });
     presets.push({ name:name, data:collectPresetData() });
     presets.sort(function(a,b){ return a.name.localeCompare(b.name); });
-    writePresets(presets);
-    populatePresetSelect(name);
+    writePresets(presets, function(){
+      populatePresetSelect(name);
+    });
     $('#preset-name-input').value='';
   });
   $('#preset-load-btn').addEventListener('click', function(){
@@ -446,8 +491,9 @@
     var name=$('#preset-select').value;
     if(!name){ alert('Choose a preset first.'); return; }
     if(!confirm('Delete preset "'+name+'"?')) return;
-    writePresets(readPresets().filter(function(p){ return p.name!==name; }));
-    populatePresetSelect();
+    writePresets(readPresets().filter(function(p){ return p.name!==name; }), function(){
+      populatePresetSelect();
+    });
   });
 
   function updateBtnPreviews() {

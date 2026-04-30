@@ -34,7 +34,7 @@ No clone or build needed — pull the image directly from Docker Hub:
 docker run -d \
   --name panopath \
   -p 3098:3098 \
-  -v panopath_tiles:/app/tmp/tiles \
+  -v panopath_data:/app/tmp \
   --restart unless-stopped \
   illerin/panopath:latest
 ```
@@ -51,14 +51,14 @@ services:
     ports:
       - "3098:3098"
     volumes:
-      - panopath_tiles:/app/tmp/tiles
+      - panopath_data:/app/tmp
     environment:
       - PORT=3098
       - NODE_ENV=production
     restart: unless-stopped
 
 volumes:
-  panopath_tiles:
+  panopath_data:
     driver: local
 ```
 
@@ -224,20 +224,20 @@ docker restart panopath
 
 ## Data persistence
 
-Tile images and source files are stored in the `panopath_tiles` Docker volume. This persists across container restarts and is required for **Open saved project** to work.
+All persistent data (tiles, source images, saved projects, and style presets) is stored under `/app/tmp` in the `panopath_data` Docker volume. This persists across container restarts and image updates.
 
-To back up your tile data:
+To back up:
 
 ```bash
-docker run --rm -v panopath_tiles:/data -v $(pwd):/backup alpine \
-  tar czf /backup/panopath-tiles-backup.tar.gz /data
+docker run --rm -v panopath_data:/data -v $(pwd):/backup alpine \
+  tar czf /backup/panopath-backup.tar.gz /data
 ```
 
 To restore:
 
 ```bash
-docker run --rm -v panopath_tiles:/data -v $(pwd):/backup alpine \
-  tar xzf /backup/panopath-tiles-backup.tar.gz -C /
+docker run --rm -v panopath_data:/data -v $(pwd):/backup alpine \
+  tar xzf /backup/panopath-backup.tar.gz -C /
 ```
 
 ## License

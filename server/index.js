@@ -385,6 +385,23 @@ app.delete('/api/projects/:filename', (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Style presets (server-side, single JSON file) ─────────────────────────────
+const PRESETS_FILE = path.join(PROJECTS_DIR, '_presets.json');
+
+app.get('/api/presets', (req, res) => {
+  try {
+    if (!fs.existsSync(PRESETS_FILE)) return res.json({ presets: [] });
+    res.json({ presets: JSON.parse(fs.readFileSync(PRESETS_FILE, 'utf8')) });
+  } catch(e) { res.json({ presets: [] }); }
+});
+
+app.post('/api/presets', express.json({ limit: '10mb' }), (req, res) => {
+  const { presets } = req.body;
+  if (!Array.isArray(presets)) return res.status(400).json({ error: 'presets must be an array' });
+  fs.writeFileSync(PRESETS_FILE, JSON.stringify(presets, null, 2));
+  res.json({ ok: true });
+});
+
 // ── Import check (tiles already on server) ────────────────────────────────────
 app.post('/api/import-check', (req, res) => {
   const { scenes } = req.body;
@@ -409,7 +426,7 @@ app.post('/api/export', async (req, res) => {
   archive.append(generateReadme(settings, scenes),     { name: 'README.txt' });
   archive.append(JSON.stringify({
     version: 1,
-    exportedWith: 'PanoPath by illerin v0.5.9',
+    exportedWith: 'PanoPath by illerin v0.5.10',
     exportedAt: new Date().toISOString(),
     settings,
     scenes
@@ -1168,7 +1185,7 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 }
 
 function generateReadme(settings, scenes){
-  const APP_VERSION = '0.5.9';
+  const APP_VERSION = '0.5.10';
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
   const timeStr = now.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });

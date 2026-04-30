@@ -5,12 +5,13 @@ services:
     ports:
       - "3098:3098"
     volumes:
-      - panopath_tiles:/app/tmp/tiles
+      # All persistent data (tiles, saved projects, presets) in one volume
+      - panopath_data:/app/tmp
     environment:
       - PORT=3098
       - NODE_ENV=production
     restart: unless-stopped
 
 volumes:
-  panopath_tiles:
+  panopath_data:
     driver: local
