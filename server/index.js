@@ -409,7 +409,7 @@ app.post('/api/export', async (req, res) => {
   archive.append(generateReadme(settings, scenes),     { name: 'README.txt' });
   archive.append(JSON.stringify({
     version: 1,
-    exportedWith: 'PanoPath by illerin v0.5.8',
+    exportedWith: 'PanoPath by illerin v0.5.9',
     exportedAt: new Date().toISOString(),
     settings,
     scenes
@@ -806,11 +806,7 @@ function generateViewerHTML(scenes, settings) {
 
 function generateAppJS(scenes, settings) {
   const scenesJson = JSON.stringify(scenes.map(s=>({
-    id:s.id, name:s.name,
-    // Always recalculate levels from faceSize so stale or missing stored levels
-    // never cause z-folder mismatches in the exported viewer.
-    levels: (s.faceSize && s.projection !== 'flat') ? generateLevels(s.faceSize).map(l=>({tileSize:l.tileSize,size:l.size})) : s.levels,
-    faceSize:s.faceSize,
+    id:s.id, name:s.name, levels:s.levels, faceSize:s.faceSize,
     initialView:s.initialView||{yaw:0,pitch:0,fov:1.5707963},
     hotspots:(s.hotspots||[]).map(h => {
       if ((s.projection === 'flat' || s.isPano === false) && h) {
@@ -825,7 +821,11 @@ function generateAppJS(scenes, settings) {
     compassEnabled:s.compassEnabled !== false,
     northOffset:s.northOffset||0,
     projection:s.projection || (s.isPano===false ? 'flat' : 'cube'),
-    flat:s.flat || null,
+    flat:s.flat ? {
+      width:  s.flat.width,
+      height: s.flat.height,
+      url:    (s.flat.url || ('tiles/'+s.id+'/flat.jpg')).replace(/^\//,'')
+    } : null,
     sourceUrl:s.sourceUrl || null,
     fisheyeFov:s.fisheyeFov || null
   })),null,2);
@@ -1168,7 +1168,7 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 }
 
 function generateReadme(settings, scenes){
-  const APP_VERSION = '0.5.8';
+  const APP_VERSION = '0.5.9';
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
   const timeStr = now.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
