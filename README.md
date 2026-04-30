@@ -56,7 +56,6 @@ services:
       - panopath_data:/app/tmp
     environment:
       - PORT=3098
-      - NODE_ENV=production
     restart: unless-stopped
 
 volumes:
