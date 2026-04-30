@@ -5,6 +5,8 @@
 
 A self-hosted Docker tool for building interactive 360° panorama tours. Upload images, add hotspots, configure branding, place floor plan dots, then export a self-contained ZIP you can host anywhere — fully offline, no internet required.
 
+See exported site examples at https://panopath.illerin.com/
+
 ## Features
 
 - Upload any image (JPG, PNG, HEIC/HEIF, TIFF, WebP) — equirectangular panoramas auto-detected
