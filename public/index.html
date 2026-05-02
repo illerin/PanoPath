@@ -35,7 +35,7 @@
 <div class="modal-bg" id="appearance-panel" hidden>
   <div class="settings-modal">
     <div class="settings-modal-header">
-      <span>Settings <span class="settings-version">v0.5.11</span></span>
+      <span>Settings <span class="settings-version">v0.5.10</span></span>
       <button class="panel-close" id="appearance-close" title="Close"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
 
@@ -45,6 +45,7 @@
       <button class="settings-tab" data-tab="tab-branding">Branding</button>
       <button class="settings-tab" data-tab="tab-hotspots">Hotspots</button>
       <button class="settings-tab" data-tab="tab-presets">Presets</button>
+      <button class="settings-tab" data-tab="tab-backup">Backup</button>
     </div>
 
     <div class="settings-body">
@@ -173,6 +174,25 @@
         <hr class="panel-hr" style="margin-top:24px">
       </div>
 
+      <!-- ── Tab: Backup ── -->
+      <div class="settings-tab-content" id="tab-backup">
+        <p class="panel-note" style="margin-top:0">Export a backup of your data to restore on another machine or after a fresh install.</p>
+
+        <h3 class="panel-section">Export Backup</h3>
+        <p class="panel-note">Select what to include in the backup:</p>
+        <label class="panel-label"><input type="checkbox" id="backup-include-projects" checked> Saved projects <span style="color:#666;font-size:11px">(includes scene tiles)</span></label>
+        <label class="panel-label"><input type="checkbox" id="backup-include-presets" checked> Style presets</label>
+        <button class="btn btn-primary" id="backup-export-btn" style="margin-top:10px;width:100%">Export Backup</button>
+
+        <hr class="panel-hr" style="margin-top:20px">
+
+        <h3 class="panel-section">Import Backup</h3>
+        <p class="panel-note">Restore data from a previously exported PanoPath backup ZIP.</p>
+        <button class="btn" id="backup-import-btn" style="width:100%">Import Backup</button>
+        <input type="file" id="backup-import-input" accept=".zip,application/zip" hidden>
+        <div id="backup-status" style="margin-top:8px;font-size:12px;color:#aaa;text-align:center;min-height:18px"></div>
+      </div>
+
     </div><!-- /.settings-body -->
   </div><!-- /.settings-modal -->
 </div>
@@ -206,7 +226,7 @@
       <div class="panel-slider-labels"><span>Small</span><span>Large</span></div>
       <hr class="panel-hr">
       <h3 class="panel-section">Dot Appearance</h3>
-      <label class="panel-label">Dot Size<input type="range" id="dot-size-slider" min="1" max="8" value="4" step="0.5" class="panel-slider"></label>
+      <label class="panel-label">Dot Size<input type="range" id="dot-size-slider" min="1" max="6" value="3" step="0.25" class="panel-slider"></label>
       <div class="panel-slider-labels"><span>Small</span><span>Large</span></div>
       <label class="panel-label" style="margin-top:10px">Active dot colour<div class="color-row"><input type="color" id="dot-active-color" value="#00cc44" class="color-swatch"><span class="color-label">Current scene</span></div></label>
       <label class="panel-label" style="margin-top:8px">Inactive dot colour<div class="color-row"><input type="color" id="dot-inactive-color" value="#ffffff" class="color-swatch"><span class="color-label">Other scenes</span></div></label>
@@ -401,12 +421,32 @@
 </div>
 
 <!-- Export success -->
+<!-- Export choice modal -->
+<div class="modal-bg" id="export-choice-modal" hidden>
+  <div class="modal" style="max-width:460px">
+    <h3>Export Tour</h3>
+    <p style="color:#888;font-size:13px;text-align:center;margin-bottom:16px">Choose an export type</p>
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%">
+      <button class="export-choice-btn" id="export-full-btn">
+        <div class="export-choice-title">Full Export</div>
+        <div class="export-choice-desc">Includes all files needed to host and re-import for future editing. Larger file size.</div>
+      </button>
+      <button class="export-choice-btn" id="export-slim-btn">
+        <div class="export-choice-title">Hosting Only</div>
+        <div class="export-choice-desc">Tiles and viewer only — smallest possible size for hosting on a website.</div>
+        <div class="export-choice-warn">Cannot be re-imported for future editing.</div>
+      </button>
+    </div>
+    <button class="btn" id="export-choice-cancel" style="margin-top:8px">Cancel</button>
+  </div>
+</div>
+
+<!-- Export success modal -->
 <div class="modal-bg" id="export-modal" hidden>
   <div class="modal">
     <div class="modal-icon"><svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="#4caf50" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="7 13 10 16 17 9"/></svg></div>
-    <h3>Tour Exported!</h3>
-    <p>Extract the ZIP and open <code>index.html</code> in any browser.</p>
-    <p style="font-size:12px;color:#777">The ZIP also includes <code>project.json</code> for re-editing.</p>
+    <h3 id="export-modal-title">Tour Exported!</h3>
+    <p id="export-modal-msg">Extract the ZIP and open <code>index.html</code> in any browser.</p>
     <button class="btn btn-primary" id="export-modal-ok">OK</button>
   </div>
 </div>

@@ -12,7 +12,7 @@
     marzViewer: null, marzScenes: {},
     logoData: null, planData: null, planSize: 200,
     dotType: 'circle', dotRotationDefault: 0,
-    dotSize: 4, dotActiveColor: '#00cc44', dotInactiveColor: '#ffffff', dotRingColor: '#000000',
+    dotSize: 3, dotActiveColor: '#00cc44', dotInactiveColor: '#ffffff', dotRingColor: '#000000',
     hotspotColors: {
       info: { bg:'#2196f3', icon:'#ffffff' },
       camera: { bg:'#ffab91', icon:'#7b2d00' },
@@ -496,6 +496,62 @@
     });
   });
 
+  // ── Backup tab ────────────────────────────────────────────────────────────
+  $('#backup-export-btn').addEventListener('click', function(){
+    var includeProjects=$('#backup-include-projects').checked;
+    var includePresets=$('#backup-include-presets').checked;
+    if(!includeProjects && !includePresets){
+      alert('Select at least one item to include in the backup.');
+      return;
+    }
+    var status=$('#backup-status');
+    status.textContent='Preparing backup...'; status.style.color='#aaa';
+    fetch('/api/backup/export',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({includeProjects:includeProjects, includePresets:includePresets})
+    })
+    .then(function(r){ return r.blob(); })
+    .then(function(blob){
+      var url=URL.createObjectURL(blob), a=document.createElement('a');
+      var d=new Date(), ds=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+      a.href=url; a.download='panopath-backup-'+ds+'.zip';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+      status.textContent='Backup exported.'; status.style.color='#00cc44';
+      setTimeout(function(){ status.textContent=''; },3000);
+    })
+    .catch(function(err){ status.textContent='Export failed: '+err.message; status.style.color='#e94560'; });
+  });
+
+  $('#backup-import-btn').addEventListener('click', function(){ $('#backup-import-input').click(); });
+  $('#backup-import-input').addEventListener('change', function(e){
+    var f=e.target.files[0]; if(!f) return;
+    e.target.value='';
+    var status=$('#backup-status');
+    status.textContent='Importing backup...'; status.style.color='#aaa';
+    var fd=new FormData(); fd.append('backup',f);
+    fetch('/api/backup/import',{ method:'POST', body:fd })
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if(data.error) throw new Error(data.error);
+      var r=data.results;
+      var parts=[];
+      if(r.projects) parts.push(r.projects+' project(s)');
+      if(r.presets) parts.push('presets');
+      if(r.tiles) parts.push('tile files');
+      status.textContent='Restored: '+parts.join(', ')+'. Reload to see changes.';
+      status.style.color='#00cc44';
+      // Refresh presets list if they were restored
+      if(r.presets){
+        fetch('/api/presets').then(function(r){ return r.json(); }).then(function(d){
+          state._presets=d.presets||[];
+          populatePresetSelect();
+        });
+      }
+    })
+    .catch(function(err){ status.textContent='Import failed: '+err.message; status.style.color='#e94560'; });
+  });
+
   function updateBtnPreviews() {
     [1,2,3].forEach(function(n) {
       var labelEl = document.getElementById('setting-btn'+n+'-text');
@@ -540,7 +596,7 @@
   })();
 
   // ── Dot controls ───────────────────────────────────────────────────────────
-  $('#dot-size-slider').addEventListener('input', function(){ state.dotSize=parseInt(this.value,10); updatePreviewPlanDots(); drawDotPreviews(); });
+  $('#dot-size-slider').addEventListener('input', function(){ state.dotSize=parseFloat(this.value); updatePreviewPlanDots(); drawDotPreviews(); });
   $('#dot-active-color').addEventListener('input', function(){ state.dotActiveColor=this.value; updatePreviewPlanDots(); drawDotPreviews(); });
   $('#dot-inactive-color').addEventListener('input', function(){ state.dotInactiveColor=this.value; updatePreviewPlanDots(); drawDotPreviews(); });
   $('#dot-ring-color').addEventListener('input', function(){ state.dotRingColor=this.value; updatePreviewPlanDots(); drawDotPreviews(); });
@@ -613,12 +669,13 @@
 
   // Save project — #8: skip modal if already saved, otherwise show it
   $('#save-btn').addEventListener('click', function(){
-    $('#project-menu').hidden=true;
     if(state.currentSavedName){
-      // Already saved: re-save immediately under the same name
+      // Already saved: re-save immediately, keep menu open so user sees feedback
       $('#save-name-input').value=state.currentSavedName;
       performSave(state.currentSavedName);
+      setTimeout(function(){ $('#project-menu').hidden=true; }, 2100);
     } else {
+      $('#project-menu').hidden=true;
       $('#save-name-input').value=$('#project-title').value||'';
       $('#save-modal').hidden=false;
       setTimeout(function(){ $('#save-name-input').select(); },50);
@@ -629,7 +686,13 @@
   $('#preview-tour-btn').addEventListener('click', function(){ $('#project-menu').hidden=true; openTestPreview(); });
 
   // ── Export / Import ────────────────────────────────────────────────────────
-  $('#export-btn').addEventListener('click', doExport);
+  $('#export-btn').addEventListener('click', function(){
+    if(!state.scenes.length){ alert('Add at least one panorama first.'); return; }
+    $('#export-choice-modal').hidden=false;
+  });
+  $('#export-choice-cancel').addEventListener('click', function(){ $('#export-choice-modal').hidden=true; });
+  $('#export-full-btn').addEventListener('click', function(){ $('#export-choice-modal').hidden=true; doExport(false); });
+  $('#export-slim-btn').addEventListener('click', function(){ $('#export-choice-modal').hidden=true; doExport(true); });
   $('#export-modal-ok').addEventListener('click', function(){ $('#export-modal').hidden=true; });
 
   // Load modal cancel
@@ -1403,8 +1466,7 @@
   }
 
   // ── Export ─────────────────────────────────────────────────────────────────
-  function doExport(){
-    if(!state.scenes.length){ alert('Add at least one panorama first.'); return; }
+  function doExport(slim){
     var ordered=state.scenes.slice();
     if(state.firstSceneId) ordered.sort(function(a,b){ return a.id===state.firstSceneId?-1:b.id===state.firstSceneId?1:0; });
     var s = {
@@ -1424,14 +1486,23 @@
       dotActiveColor:state.dotActiveColor||'#00cc44', dotInactiveColor:state.dotInactiveColor||'#ffffff', dotRingColor:state.dotRingColor||'#000000',
     };
     var modal=$('#processing-modal'), fill=$('#progress-fill');
+    var endpoint = slim ? '/api/export-slim' : '/api/export';
     modal.hidden=false; $('#processing-label').textContent='Generating ZIP…'; fill.style.width='20%';
-    fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenes:ordered,settings:s})})
+    fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scenes:ordered,settings:s})})
       .then(function(r){ fill.style.width='80%'; return r.blob(); })
       .then(function(blob){
         fill.style.width='100%'; modal.hidden=true; fill.style.width='0%';
         var url=URL.createObjectURL(blob), a=document.createElement('a');
-        a.href=url; a.download=(s.title||'tour').replace(/[^a-z0-9]/gi,'-')+'.zip';
+        a.href=url; a.download=(s.title||'tour').replace(/[^a-z0-9]/gi,'-')+(slim?'-hosting':'')+'.zip';
         document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+        var title=$('#export-modal-title'), msg=$('#export-modal-msg');
+        if(slim){
+          title.textContent='Hosting Export Ready!';
+          msg.innerHTML='Extract the ZIP and upload to your web server.<br><span style="color:#e94560;font-size:12px">⚠ This export cannot be re-imported for editing.</span>';
+        } else {
+          title.textContent='Tour Exported!';
+          msg.innerHTML='Extract the ZIP and open <code>index.html</code> in any browser.';
+        }
         $('#export-modal').hidden=false;
       })
       .catch(function(err){ modal.hidden=true; fill.style.width='0%'; alert('Export failed: '+err.message); });
@@ -1543,7 +1614,7 @@
       btn2TextColor:'#ffffff', btn2BgColor:'#000000',
       btn3TextColor:'#ffffff', btn3BgColor:'#e94560',
       dotType:'circle', dotRotationDefault:0,
-      dotSize:4, dotActiveColor:'#00cc44', dotInactiveColor:'#ffffff', dotRingColor:'#000000',
+      dotSize:3, dotActiveColor:'#00cc44', dotInactiveColor:'#ffffff', dotRingColor:'#000000',
       planSize:200
     };
     state.hotspotColors = JSON.parse(JSON.stringify(DEFAULTS.hotspotColors));

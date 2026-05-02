@@ -423,7 +423,7 @@ app.post('/api/export', async (req, res) => {
   archive.append(generateViewerHTML(scenes, settings), { name: 'index.html' });
   archive.append(generateAppJS(scenes, settings),      { name: 'app.js' });
   archive.append(generateAppCSS(),                     { name: 'style.css' });
-  archive.append(generateReadme(settings, scenes),     { name: 'README.txt' });
+  archive.append(generateReadme(settings, scenes, 'full'), { name: 'README.txt' });
   archive.append(JSON.stringify({
     version: 1,
     exportedWith: 'PanoPath by illerin v0.5.10',
@@ -454,6 +454,159 @@ app.post('/api/export', async (req, res) => {
     if (fs.existsSync(sceneDir)) archive.directory(sceneDir, `tiles/${scene.id}`);
   }
   await archive.finalize();
+});
+
+// ── Slim export (hosting only — no source.jpg, no project.json, no README) ──
+app.post('/api/export-slim', async (req, res) => {
+  const { scenes, settings } = req.body;
+  if (!scenes || !scenes.length) return res.status(400).json({ error: 'No scenes' });
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="tour-hosting.zip"');
+
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  archive.pipe(res);
+
+  archive.append(generateViewerHTML(scenes, settings), { name: 'index.html' });
+  archive.append(generateAppJS(scenes, settings),      { name: 'app.js' });
+  archive.append(generateAppCSS(),                     { name: 'style.css' });
+  archive.append(generateReadme(settings, scenes, 'slim'), { name: 'README.txt' });
+
+  // Bundle Marzipano locally
+  if (fs.existsSync(MARZIPANO_PATH)) {
+    archive.file(MARZIPANO_PATH, { name: 'marzipano.js' });
+  }
+
+  if (settings.logoData) {
+    const m = settings.logoData.match(/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,(.+)$/);
+    if (m) archive.append(Buffer.from(m[2], 'base64'), { name: `logo.${m[1].replace('svg+xml','svg')}` });
+  }
+  if (settings.planData) {
+    const m = settings.planData.match(/^data:image\/(png|jpeg|jpg|gif|webp);base64,(.+)$/);
+    if (m) archive.append(Buffer.from(m[2], 'base64'), { name: `plan.${m[1]}` });
+  }
+
+  // Add tiles but skip source.jpg in each scene folder
+  for (const scene of scenes) {
+    const sceneDir = path.join(TILES_DIR, scene.id);
+    if (!fs.existsSync(sceneDir)) continue;
+    const entries = fs.readdirSync(sceneDir);
+    for (const entry of entries) {
+      if (entry === 'source.jpg') continue; // skip — not needed for hosting
+      const entryPath = path.join(sceneDir, entry);
+      const stat = fs.statSync(entryPath);
+      if (stat.isDirectory()) {
+        archive.directory(entryPath, `tiles/${scene.id}/${entry}`);
+      } else {
+        archive.file(entryPath, { name: `tiles/${scene.id}/${entry}` });
+      }
+    }
+  }
+
+  await archive.finalize();
+});
+
+// ── Backup export ────────────────────────────────────────────────────────────
+app.post('/api/backup/export', express.json({ limit: '10mb' }), async (req, res) => {
+  const { includeProjects, includePresets } = req.body || {};
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0,10);
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="panopath-backup-${dateStr}.zip"`);
+
+  const archive = archiver('zip', { zlib: { level: 6 } });
+  archive.pipe(res);
+
+  const manifest = {
+    createdAt: now.toISOString(),
+    exportedWith: 'PanoPath by illerin v0.5.10',
+    includesProjects: !!includeProjects,
+    includesPresets: !!includePresets,
+  };
+  archive.append(JSON.stringify(manifest, null, 2), { name: 'backup-manifest.json' });
+
+  if (includePresets && fs.existsSync(PRESETS_FILE)) {
+    archive.file(PRESETS_FILE, { name: 'data/presets.json' });
+  }
+
+  if (includeProjects) {
+    const projectFiles = fs.existsSync(PROJECTS_DIR)
+      ? fs.readdirSync(PROJECTS_DIR).filter(f => f.endsWith('.json') && f !== '_presets.json')
+      : [];
+
+    for (const f of projectFiles) {
+      const projectPath = path.join(PROJECTS_DIR, f);
+      archive.file(projectPath, { name: `data/projects/${f}` });
+
+      // Bundle the tile folders for every scene in this project
+      try {
+        const project = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
+        const scenes = project.scenes || [];
+        for (const scene of scenes) {
+          if (!scene.id) continue;
+          const sceneDir = path.join(TILES_DIR, scene.id);
+          if (fs.existsSync(sceneDir)) {
+            archive.directory(sceneDir, `data/tiles/${scene.id}`);
+          }
+        }
+      } catch(e) {
+        console.warn(`Could not read project ${f} for tile bundling:`, e.message);
+      }
+    }
+  }
+
+  await archive.finalize();
+});
+
+// ── Backup import ─────────────────────────────────────────────────────────────
+const uploadBackup = multer({ dest: UPLOAD_DIR, limits: { fileSize: 2 * 1024 * 1024 * 1024 } });
+app.post('/api/backup/import', uploadBackup.single('backup'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+  const results = { projects: 0, presets: false, tiles: 0 };
+  try {
+    const dir = await unzipper.Open.file(req.file.path);
+
+    // Validate it's a PanoPath backup
+    const manifestEntry = dir.files.find(f => f.path === 'backup-manifest.json');
+    if (!manifestEntry) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Not a valid PanoPath backup ZIP.' });
+    }
+
+    for (const file of dir.files) {
+      if (file.type === 'Directory') continue;
+      const p = file.path;
+      if (p === 'backup-manifest.json') continue;
+
+      if (p === 'data/presets.json') {
+        const buf = await file.buffer();
+        fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+        fs.writeFileSync(PRESETS_FILE, buf);
+        results.presets = true;
+
+      } else if (p.startsWith('data/projects/') && p.endsWith('.json')) {
+        const filename = path.basename(p);
+        const buf = await file.buffer();
+        fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+        fs.writeFileSync(path.join(PROJECTS_DIR, filename), buf);
+        results.projects++;
+
+      } else if (p.startsWith('data/tiles/')) {
+        const rel = p.replace('data/tiles/', '');
+        const dest = path.join(TILES_DIR, rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        const buf = await file.buffer();
+        fs.writeFileSync(dest, buf);
+        results.tiles++;
+      }
+    }
+    fs.unlinkSync(req.file.path);
+    res.json({ ok: true, results });
+  } catch (e) {
+    try { fs.unlinkSync(req.file.path); } catch(_) {}
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── Live preview session ──────────────────────────────────────────────────────
@@ -544,6 +697,7 @@ app.get('/preview/:id/view', (req, res) => {
   }
   // In preview mode, viewer runs under /preview/:id/view, so tile paths must be absolute.
   appJs = appJs.replace(/'tiles\//g, "'/tiles/");
+  appJs = appJs.replace(/"tiles\//g, '"/tiles/');
   appJs = appJs.replace(/<\/script/gi, '<\\/script');
   html = html.replace('<script src="app.js"></script>', `<script>${appJs}</script>`);
 
@@ -989,7 +1143,8 @@ function generateAppJS(scenes, settings) {
   setInterval(updateCompass, 50);`:''}
 
 
-  function drawPlanSymbol(ctx,x,y,r,color,type,rotation,isActive){
+  function drawPlanSymbol(ctx,x,y,r,color,type,rotation,isActive,ringColor){
+    ringColor=ringColor||'#000000';
     ctx.save(); ctx.translate(x,y);
     if(type==='arrow'){
       ctx.rotate((rotation*Math.PI)/180);
@@ -1001,10 +1156,10 @@ function generateAppJS(scenes, settings) {
       ctx.fillStyle=color+(isActive?'cc':'88'); ctx.fill();
       ctx.strokeStyle=isActive?'rgba(0,0,0,0.7)':'rgba(0,0,0,0.4)'; ctx.lineWidth=1; ctx.stroke();
       ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
-      ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle='#000'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=ringColor; ctx.lineWidth=1.5; ctx.stroke();
     } else {
       ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2);
-      ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle='#000'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=ringColor; ctx.lineWidth=1.5; ctx.stroke();
     }
     ctx.restore();
   }
@@ -1017,7 +1172,8 @@ function generateAppJS(scenes, settings) {
     canvas.width=container.offsetWidth; canvas.height=container.offsetHeight;
     var ctx=canvas.getContext('2d');
     ctx.clearRect(0,0,canvas.width,canvas.height);
-    var r=APP.settings.dotSize||4;
+    var scale=canvas.width/200;
+    var r=(APP.settings.dotSize||4)*scale;
     var activeCol=APP.settings.dotActiveColor||'#00cc44';
     var inactiveCol=APP.settings.dotInactiveColor||'#ffffff';
     var dotType=APP.settings.dotType||'circle';
@@ -1025,7 +1181,7 @@ function generateAppJS(scenes, settings) {
       if(!sd.planDot)return;
       var x=sd.planDot.x*canvas.width, y=sd.planDot.y*canvas.height;
       var isActive=sd.id===activeId;
-      drawPlanSymbol(ctx,x,y,r,isActive?activeCol:inactiveCol,dotType,sd.planDot.rotation||0,isActive);
+      drawPlanSymbol(ctx,x,y,r,isActive?activeCol:inactiveCol,dotType,sd.planDot.rotation||0,isActive,APP.settings.dotRingColor||'#000000');
     });
   }
 
@@ -1069,7 +1225,8 @@ function generateAppJS(scenes, settings) {
       var cx=(e.clientX-rect.left)/rect.width, cy=(e.clientY-rect.top)/rect.height;
       var best=null, bestDist=Infinity;
       var r=APP.settings.dotSize||4;
-      var tol=Math.max(0.06,(r*3)/rect.width);
+      var scaledR=r*(rect.width/200);
+      var tol=Math.max(0.06,(scaledR*3)/rect.width);
       APP.scenes.forEach(function(sd){
         if(!sd.planDot)return;
         var dx=sd.planDot.x-cx, dy=sd.planDot.y-cy;
@@ -1184,19 +1341,22 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 .hs-label-expanded{white-space:normal;overflow:visible;text-overflow:unset;max-width:260px;}`;
 }
 
-function generateReadme(settings, scenes){
+function generateReadme(settings, scenes, exportType){
+  exportType = exportType || 'full';
   const APP_VERSION = '0.5.10';
+  const isSlim = exportType === 'slim';
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
   const timeStr = now.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
   const sceneList = (scenes||[]).map((s,i) => `  ${i+1}. ${s.name||('Scene '+(i+1))}`).join('\n');
-  return [
+  const lines = [
     'PanoPath by illerin',
     '===================',
-    `Version:   ${APP_VERSION}`,
-    `Title:     ${settings.title||'Panorama Tour'}`,
-    `Exported:  ${dateStr} at ${timeStr}`,
-    `Scenes:    ${(scenes||[]).length}`,
+    `Version:     ${APP_VERSION}`,
+    `Export type: ${isSlim ? 'Hosting Only' : 'Full Export'}`,
+    `Title:       ${settings.title||'Panorama Tour'}`,
+    `Exported:    ${dateStr} at ${timeStr}`,
+    `Scenes:      ${(scenes||[]).length}`,
     sceneList,
     '',
     'Hosting',
@@ -1206,8 +1366,15 @@ function generateReadme(settings, scenes){
     '',
     'Re-editing',
     '----------',
-    'Import the ZIP back into PanoPath using Project → Import ZIP to continue editing.',
-  ].join('\n');
+  ];
+  if (isSlim) {
+    lines.push('This is a Hosting Only export. It does not include source images or project.json.');
+    lines.push('It cannot be re-imported into PanoPath for future editing.');
+    lines.push('To retain editing capability, use Full Export instead.');
+  } else {
+    lines.push('This is a Full Export. Import the ZIP back into PanoPath using Project -> Import ZIP to continue editing.');
+  }
+  return lines.join('\n');
 }
 
 function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
