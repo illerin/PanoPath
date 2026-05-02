@@ -35,7 +35,7 @@
 <div class="modal-bg" id="appearance-panel" hidden>
   <div class="settings-modal">
     <div class="settings-modal-header">
-      <span>Settings <span class="settings-version">v0.5.10</span></span>
+      <span>Settings <span class="settings-version">v0.5.11</span></span>
       <button class="panel-close" id="appearance-close" title="Close"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
 
@@ -55,7 +55,7 @@
         <label class="panel-label"><input type="checkbox" id="setting-autorotate"> Autorotate</label>
         <label class="panel-label"><input type="checkbox" id="setting-fullscreen" checked> Fullscreen button</label>
         <label class="panel-label"><input type="checkbox" id="setting-zoom" checked> Zoom buttons</label>
-        <label class="panel-label"><input type="checkbox" id="setting-compass" checked> Compass</label>
+        <label class="panel-label"><input type="checkbox" id="setting-compass"> Compass</label>
         <p class="panel-note" id="compass-note">When enabled, select a scene to turn the compass on or off for that view and set the north offset.</p>
         <label class="panel-label" style="margin-top:10px">Mouse mode
           <select id="setting-mousemode" class="panel-select" style="margin-left:0;margin-top:4px">
@@ -199,22 +199,18 @@
         <button class="dot-type-btn active" id="dot-type-circle" data-type="circle">Circle</button>
         <button class="dot-type-btn" id="dot-type-arrow" data-type="arrow">Direction</button>
       </div>
-      <label class="panel-label" id="dot-rotation-row" style="display:none;margin-top:8px">Default rotation (°)
-        <div style="display:flex;align-items:center;gap:8px">
-          <input type="range" id="dot-rotation-slider" min="0" max="359" value="0" step="1" class="panel-slider" style="flex:1">
-          <span id="dot-rotation-val" style="color:#aaa;font-size:12px;min-width:32px">0°</span>
-        </div>
-      </label>
+      <!-- rotation slider removed -->
       <hr class="panel-hr">
       <h3 class="panel-section">Plan Size</h3>
-      <input type="range" id="plan-size-slider" min="100" max="400" value="200" step="10" class="panel-slider">
+      <input type="range" id="plan-size-slider" min="100" max="700" value="200" step="10" class="panel-slider">
       <div class="panel-slider-labels"><span>Small</span><span>Large</span></div>
       <hr class="panel-hr">
       <h3 class="panel-section">Dot Appearance</h3>
-      <label class="panel-label">Dot Size<input type="range" id="dot-size-slider" min="2" max="12" value="4" step="1" class="panel-slider"></label>
+      <label class="panel-label">Dot Size<input type="range" id="dot-size-slider" min="1" max="8" value="4" step="0.5" class="panel-slider"></label>
       <div class="panel-slider-labels"><span>Small</span><span>Large</span></div>
       <label class="panel-label" style="margin-top:10px">Active dot colour<div class="color-row"><input type="color" id="dot-active-color" value="#00cc44" class="color-swatch"><span class="color-label">Current scene</span></div></label>
       <label class="panel-label" style="margin-top:8px">Inactive dot colour<div class="color-row"><input type="color" id="dot-inactive-color" value="#ffffff" class="color-swatch"><span class="color-label">Other scenes</span></div></label>
+      <label class="panel-label" style="margin-top:8px">Ring colour<div class="color-row"><input type="color" id="dot-ring-color" value="#000000" class="color-swatch"><span class="color-label">Outline</span></div></label>
       <div class="dot-preview-row">
         <div class="dot-preview-item"><canvas id="dot-preview-active" width="28" height="28"></canvas><span>Active</span></div>
         <div class="dot-preview-item"><canvas id="dot-preview-inactive" width="28" height="28"></canvas><span>Inactive</span></div>

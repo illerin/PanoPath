@@ -95,7 +95,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 #preview-logo{height:36px;max-width:120px;object-fit:contain;filter:drop-shadow(0 1px 4px rgba(0,0,0,0.6));border-radius:4px;}
 #preview-btn1,#preview-btn2{color:#fff;font-size:12px;font-weight:600;background:rgba(0,0,0,0.65);padding:6px 14px;border-radius:8px;white-space:nowrap;}
 #preview-btn3{color:#fff;font-size:12px;font-weight:600;background:rgba(233,69,96,0.85);padding:6px 14px;border-radius:8px;white-space:nowrap;}
-#preview-plan-wrap{position:absolute;bottom:56px;right:14px;width:200px;height:150px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6);background:#111;overflow:hidden;}
+#preview-plan-wrap{position:absolute;bottom:56px;right:14px;width:200px;height:150px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6);background:#111;overflow:hidden;pointer-events:all;}
 #preview-plan-img{width:100%;height:100%;object-fit:contain;display:block;border-radius:8px;}
 #preview-plan-canvas{position:absolute;inset:0;pointer-events:none;width:100%;height:100%;}
 
@@ -171,7 +171,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 #editor-compass.flat-mode svg{transform:none;}
 #editor-compass.flat-mode .compass-north-label{display:none;}
 #editor-compass.flat-mode #editor-north-arrow{display:block;}
-.hs-marker-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;transform:translate(-50%,-50%);cursor:default;}
+.hs-marker-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;transform:translate(-50%,-50%);cursor:default;text-align:center;position:relative;}
 .hs-marker{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 2px 10px rgba(0,0,0,0.6);transition:transform 0.12s;padding:8px;}
 .hs-marker-wrap:hover .hs-marker{transform:scale(1.15);}
 .hs-marker.info{background:#2196F3;}
@@ -183,8 +183,8 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .hs-marker.link-eye{background:#80DEEA;color:#004D55;}
 .hs-marker.link-location{background:#FFAB91;color:#7B1500;}
 .hs-marker svg{width:20px;height:20px;display:block;}
-.hs-marker-label{background:rgba(0,0,0,0.8);color:#fff;padding:4px 10px;border-radius:10px;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;display:block;width:max-content;cursor:pointer;transition:all 0.2s ease;}
-.hs-marker-label-expanded{white-space:normal;overflow:visible;text-overflow:unset;max-width:240px;}
+.hs-marker-label{background:rgba(0,0,0,0.8);color:#fff;padding:4px 10px;border-radius:10px;font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;position:absolute;top:calc(100% + 4px);left:50%;transform:translateX(-50%);white-space:nowrap;cursor:pointer;transition:all 0.2s ease;}
+.hs-marker-label-expanded{white-space:normal;overflow:visible;text-overflow:unset;width:220px;text-align:center;}
 
 
 /* Button colour pickers */
@@ -239,7 +239,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .saved-project-item:hover .saved-project-del{opacity:1;color:#e94560;}
 
 /* ── Plan view controls bar ──────────────────────────────────── */
-.plan-controls-bar{position:absolute;top:0;left:0;right:0;height:24px;background:rgba(0,0,0,0.6);display:flex;align-items:center;padding:0 6px;gap:4px;border-radius:8px 8px 0 0;z-index:2;}
+.plan-controls-bar{position:absolute;top:0;left:0;right:0;height:24px;background:rgba(0,0,0,0.6);display:flex;align-items:center;padding:0 6px;gap:4px;border-radius:8px 8px 0 0;z-index:2;pointer-events:all;}
 .plan-controls-title{flex:1;font-size:11px;color:#aaa;font-weight:600;letter-spacing:0.3px;}
 .plan-ctrl-btn{background:none;border:none;color:#aaa;cursor:pointer;font-size:13px;padding:0 4px;line-height:1;transition:color 0.15s;}
 .plan-ctrl-btn:hover{color:#fff;}
@@ -350,4 +350,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .settings-version{
   font-size:12px;font-weight:400;color:#fff;
   opacity:0.55;margin-left:8px;letter-spacing:0;
+}
+/* ── Plan maximize in editor (#6) ─────────────────────────────────────────── */
+#preview-plan-wrap.plan-editor-maximised {
+  width: 45vw !important;
+  height: 45vh !important;
+  max-width: 600px;
+  max-height: 500px;
 }

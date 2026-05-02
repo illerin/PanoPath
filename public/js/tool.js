@@ -12,7 +12,7 @@
     marzViewer: null, marzScenes: {},
     logoData: null, planData: null, planSize: 200,
     dotType: 'circle', dotRotationDefault: 0,
-    dotSize: 4, dotActiveColor: '#00cc44', dotInactiveColor: '#ffffff',
+    dotSize: 4, dotActiveColor: '#00cc44', dotInactiveColor: '#ffffff', dotRingColor: '#000000',
     hotspotColors: {
       info: { bg:'#2196f3', icon:'#ffffff' },
       camera: { bg:'#ffab91', icon:'#7b2d00' },
@@ -246,7 +246,8 @@
     refreshSceneRendering();
   }
 
-  function drawPlanSymbol(ctx,x,y,r,color,type,rotation,isActive){
+  function drawPlanSymbol(ctx,x,y,r,color,type,rotation,isActive,ringColor){
+    ringColor = ringColor || '#000000';
     ctx.save();
     ctx.translate(x,y);
     if(type==='arrow'){
@@ -266,7 +267,7 @@
       ctx.arc(0,0,r,0,Math.PI*2);
       ctx.fillStyle=color;
       ctx.fill();
-      ctx.strokeStyle='#000';
+      ctx.strokeStyle=ringColor;
       ctx.lineWidth=1.5;
       ctx.stroke();
     } else {
@@ -274,7 +275,7 @@
       ctx.arc(0,0,r,0,Math.PI*2);
       ctx.fillStyle=color;
       ctx.fill();
-      ctx.strokeStyle='#000';
+      ctx.strokeStyle=ringColor;
       ctx.lineWidth=1.5;
       ctx.stroke();
     }
@@ -514,26 +515,48 @@
   $('#plan-size-slider').addEventListener('input', function(){ state.planSize=parseInt(this.value,10); applyPlanSize(); updatePreviewPlanDots(); });
   function applyPlanSize(){ var w=state.planSize||200, h=Math.round(w*0.75), wrap=$('#preview-plan-wrap'); if(wrap){ wrap.style.width=w+'px'; wrap.style.height=h+'px'; } }
 
+  // ── Plan maximize / minimize in editor (#6) ────────────────────────────────
+  (function(){
+    var planWrap = $('#preview-plan-wrap');
+    var maxBtn   = $('#plan-maximize-btn');
+    var minBtn   = $('#plan-minimize-btn');
+    var restoreBtn = $('#plan-restore-btn');
+    var _maximised = false;
+    var _minimised = false;
+    function setPlanMaximised(on){
+      _maximised = on;
+      if(planWrap) planWrap.classList.toggle('plan-editor-maximised', on);
+      if(maxBtn) maxBtn.title = on ? 'Restore' : 'Maximise';
+    }
+    function setPlanMinimised(on){
+      _minimised = on;
+      if(planWrap) planWrap.hidden = on;
+      if(restoreBtn) restoreBtn.hidden = !on;
+      if(on && _maximised) setPlanMaximised(false);
+    }
+    if(maxBtn) maxBtn.addEventListener('click', function(e){ e.stopPropagation(); setPlanMaximised(!_maximised); });
+    if(minBtn) minBtn.addEventListener('click', function(e){ e.stopPropagation(); setPlanMinimised(true); });
+    if(restoreBtn) restoreBtn.addEventListener('click', function(e){ e.stopPropagation(); setPlanMinimised(false); });
+  })();
+
   // ── Dot controls ───────────────────────────────────────────────────────────
   $('#dot-size-slider').addEventListener('input', function(){ state.dotSize=parseInt(this.value,10); updatePreviewPlanDots(); drawDotPreviews(); });
   $('#dot-active-color').addEventListener('input', function(){ state.dotActiveColor=this.value; updatePreviewPlanDots(); drawDotPreviews(); });
   $('#dot-inactive-color').addEventListener('input', function(){ state.dotInactiveColor=this.value; updatePreviewPlanDots(); drawDotPreviews(); });
+  $('#dot-ring-color').addEventListener('input', function(){ state.dotRingColor=this.value; updatePreviewPlanDots(); drawDotPreviews(); });
   function drawDotPreviews(){ drawDot($('#dot-preview-active'),state.dotActiveColor,state.dotSize); drawDot($('#dot-preview-inactive'),state.dotInactiveColor,state.dotSize); }
-  function drawDot(canvas,color,r){ if(!canvas)return; var s=Math.max(28,(r+4)*4); canvas.width=s; canvas.height=s; var ctx=canvas.getContext('2d'); ctx.clearRect(0,0,s,s); ctx.beginPath(); ctx.arc(s/2,s/2,r,0,Math.PI*2); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle='#000'; ctx.lineWidth=1.5; ctx.stroke(); }
+  function drawDot(canvas,color,r,ringColor){ if(!canvas)return; var s=28; canvas.width=s; canvas.height=s; var ctx=canvas.getContext('2d'); ctx.clearRect(0,0,s,s); var pr=6; ctx.beginPath(); ctx.arc(s/2,s/2,pr,0,Math.PI*2); ctx.fillStyle=color; ctx.fill(); ctx.strokeStyle=ringColor||state.dotRingColor||'#000000'; ctx.lineWidth=1.5; ctx.stroke(); }
   drawDotPreviews();
   $$('.dot-type-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       state.dotType = btn.dataset.type || 'circle';
       $$('.dot-type-btn').forEach(function(other){ other.classList.toggle('active', other===btn); });
-      $('#dot-rotation-row').style.display = state.dotType==='arrow' ? '' : 'none';
+
       updatePreviewPlanDots();
       var curSd=getActiveScene(); if(curSd) renderProps(curSd);
     });
   });
-  $('#dot-rotation-slider').addEventListener('input', function(){
-    state.dotRotationDefault=parseInt(this.value,10)||0;
-    $('#dot-rotation-val').textContent=state.dotRotationDefault+'°';
-  });
+
 
   // ── Toolbar ────────────────────────────────────────────────────────────────
   $('#btn-hotspot-info').addEventListener('click', function(){ startHotspotPlacement('info'); });
@@ -568,7 +591,9 @@
     $('#project-menu').hidden=true;
     if(state.scenes.length && !confirm('Start a new project? Unsaved changes will be lost.')) return;
     state.scenes.forEach(function(s){ var ms=state.marzScenes[s.id]; if(ms){ try{ state.marzViewer.destroyScene(ms); }catch(e){} } });
-    state.scenes=[]; state.marzScenes={}; state.activeSceneId=null; state.firstSceneId=null; state.logoData=null; state.planData=null;
+    state.scenes=[]; state.marzScenes={}; state.activeSceneId=null; state.firstSceneId=null;
+    state.logoData=null; state.planData=null; state.currentSavedName=null;
+    resetSettingsToDefault();
     $$('.scene-item').forEach(function(el){ el.remove(); }); $('#drop-hint').style.display='';
     $('#viewer-empty').hidden=false; $('#viewer-toolbar').hidden=true;
     $('#props-inner').innerHTML='<div class="props-empty">Select a scene to edit</div>';
@@ -586,12 +611,18 @@
     $('#import-zip-input').click();
   });
 
-  // Save project
+  // Save project — #8: skip modal if already saved, otherwise show it
   $('#save-btn').addEventListener('click', function(){
     $('#project-menu').hidden=true;
-    $('#save-name-input').value=$('#project-title').value||'';
-    $('#save-modal').hidden=false;
-    setTimeout(function(){ $('#save-name-input').select(); },50);
+    if(state.currentSavedName){
+      // Already saved: re-save immediately under the same name
+      $('#save-name-input').value=state.currentSavedName;
+      performSave(state.currentSavedName);
+    } else {
+      $('#save-name-input').value=$('#project-title').value||'';
+      $('#save-modal').hidden=false;
+      setTimeout(function(){ $('#save-name-input').select(); },50);
+    }
   });
 
   // Preview tour (renamed from Test Viewer)
@@ -1360,12 +1391,14 @@
     var wrap=$('#preview-plan-wrap'); if(!wrap||wrap.hidden) return;
     canvas.width=wrap.offsetWidth||200; canvas.height=wrap.offsetHeight||150;
     var ctx=canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height);
-    var r=state.dotSize||4;
+    var scale=canvas.width/(200);
+    var r=(state.dotSize||4)*scale;
+    var ringColor=state.dotRingColor||'#000000';
     state.scenes.forEach(function(sd){
       if(!sd.planDot) return;
       var x=sd.planDot.x*canvas.width, y=sd.planDot.y*canvas.height;
       var isActive=sd.id===state.activeSceneId;
-      drawPlanSymbol(ctx,x,y,r,isActive?state.dotActiveColor:state.dotInactiveColor,state.dotType,sd.planDot.rotation||0,isActive);
+      drawPlanSymbol(ctx,x,y,r,isActive?state.dotActiveColor:state.dotInactiveColor,state.dotType,sd.planDot.rotation||0,isActive,ringColor);
     });
   }
 
@@ -1388,7 +1421,7 @@
       planData:state.planData||null, firstSceneId:state.firstSceneId||'',
       dotType:state.dotType||'circle',
       planSize:state.planSize||200, dotSize:state.dotSize||4,
-      dotActiveColor:state.dotActiveColor||'#00cc44', dotInactiveColor:state.dotInactiveColor||'#ffffff',
+      dotActiveColor:state.dotActiveColor||'#00cc44', dotInactiveColor:state.dotInactiveColor||'#ffffff', dotRingColor:state.dotRingColor||'#000000',
     };
     var modal=$('#processing-modal'), fill=$('#progress-fill');
     modal.hidden=false; $('#processing-label').textContent='Generating ZIP…'; fill.style.width='20%';
@@ -1490,24 +1523,102 @@
       planData:state.planData||null, firstSceneId:state.firstSceneId||'',
       dotType:state.dotType||'circle',
       planSize:state.planSize||200, dotSize:state.dotSize||4,
-      dotActiveColor:state.dotActiveColor||'#00cc44', dotInactiveColor:state.dotInactiveColor||'#ffffff',
+      dotActiveColor:state.dotActiveColor||'#00cc44', dotInactiveColor:state.dotInactiveColor||'#ffffff', dotRingColor:state.dotRingColor||'#000000',
     };
   }
 
-  function doSaveProject(){
-    var name=$('#save-name-input').value.trim();
-    if(!name){ alert('Enter a project name.'); return; }
+  // ── resetSettingsToDefault (#4) ──────────────────────────────────────────
+  function resetSettingsToDefault(){
+    var DEFAULTS = {
+      hotspotColors: {
+        info:     { bg:'#2196f3', icon:'#ffffff' },
+        camera:   { bg:'#ffab91', icon:'#7b2d00' },
+        arrow:    { bg:'#ce93d8', icon:'#4a0070' },
+        door:     { bg:'#a5d6a7', icon:'#1b5e20' },
+        star:     { bg:'#ffcc80', icon:'#7b3e00' },
+        eye:      { bg:'#80deea', icon:'#004d55' },
+        location: { bg:'#ffab91', icon:'#7b1500' }
+      },
+      btn1TextColor:'#ffffff', btn1BgColor:'#000000',
+      btn2TextColor:'#ffffff', btn2BgColor:'#000000',
+      btn3TextColor:'#ffffff', btn3BgColor:'#e94560',
+      dotType:'circle', dotRotationDefault:0,
+      dotSize:4, dotActiveColor:'#00cc44', dotInactiveColor:'#ffffff', dotRingColor:'#000000',
+      planSize:200
+    };
+    state.hotspotColors = JSON.parse(JSON.stringify(DEFAULTS.hotspotColors));
+    syncHotspotColorInputs(); updateAllHotspotPreviews();
+    ['btn1TextColor','btn1BgColor','btn2TextColor','btn2BgColor','btn3TextColor','btn3BgColor'].forEach(function(k){
+      state[k]=DEFAULTS[k];
+    });
+    state.dotType=DEFAULTS.dotType; state.dotRotationDefault=DEFAULTS.dotRotationDefault;
+    state.dotSize=DEFAULTS.dotSize; state.dotActiveColor=DEFAULTS.dotActiveColor;
+    state.dotInactiveColor=DEFAULTS.dotInactiveColor; state.dotRingColor=DEFAULTS.dotRingColor; state.planSize=DEFAULTS.planSize;
+    $('#setting-autorotate').checked=false;
+    $('#setting-fullscreen').checked=true;
+    $('#setting-zoom').checked=true;
+    $('#setting-compass').checked=false;
+    $('#setting-mousemode').value='drag';
+    $('#setting-logo-url').value=''; $('#setting-logo-newtab').checked=false;
+    $('#logo-preview').src=''; $('#logo-preview-wrap').hidden=true;
+    [1,2,3].forEach(function(n){
+      $('#setting-btn'+n+'-text').value='';
+      $('#setting-btn'+n+'-url').value='';
+      $('#setting-btn'+n+'-newtab').checked=false;
+      $('#btn'+n+'-text-color').value=DEFAULTS['btn'+n+'TextColor'];
+      $('#btn'+n+'-bg-color').value=DEFAULTS['btn'+n+'BgColor'];
+    });
+    wireBtnColors(1); wireBtnColors(2); wireBtnColors(3); updateBtnPreviews();
+    var dotSizeEl=$('#dot-size-slider'); if(dotSizeEl) dotSizeEl.value=DEFAULTS.dotSize;
+    var dotAcEl=$('#dot-active-color'); if(dotAcEl) dotAcEl.value=DEFAULTS.dotActiveColor;
+    var dotInEl=$('#dot-inactive-color'); if(dotInEl) dotInEl.value=DEFAULTS.dotInactiveColor;
+    var dotRingEl=$('#dot-ring-color'); if(dotRingEl) dotRingEl.value=DEFAULTS.dotRingColor;
+    var planEl=$('#plan-size-slider'); if(planEl) planEl.value=DEFAULTS.planSize; applyPlanSize();
+    $$('.dot-type-btn').forEach(function(btn){ btn.classList.toggle('active', btn.dataset.type==='circle'); });
+    drawDotPreviews();
+    // Reset plan panel UI
+    var planPrev=$('#plan-preview'); if(planPrev){ planPrev.src=''; }
+    var planWrap=$('#plan-preview-wrap'); if(planWrap) planWrap.hidden=true;
+    var planCtrl=$('#plan-controls'); if(planCtrl) planCtrl.style.display='none';
+  }
+
+  // ── Save helpers: #8 skip modal if already saved, #9 warn on duplicate name ─
+  function performSave(name){
     if(!state.scenes.length){ alert('Add at least one scene before saving.'); return; }
+    $('#project-title').value=name;  // set title before collectSettings so it's baked in
     var project={version:1, settings:collectSettings(), scenes:state.scenes};
     fetch('/api/projects/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,project:project})})
       .then(function(r){ return r.json(); })
       .then(function(result){
         if(result.error) throw new Error(result.error);
         $('#save-modal').hidden=true;
-        var btn=$('#save-btn'); btn.textContent='Saved!';
-        setTimeout(function(){ btn.textContent='Save project'; },1500);
+        state.currentSavedName=name;
+        // Flash the save button so user knows it worked (modal and direct-save paths)
+        var btn=$('#save-btn');
+        btn.textContent='✓ Saved!';
+        btn.style.color='#00cc44';
+        setTimeout(function(){ btn.textContent='Save project'; btn.style.color=''; },2000);
       })
       .catch(function(err){ alert('Save failed: '+err.message); });
+  }
+
+  function doSaveProject(){
+    var name=$('#save-name-input').value.trim();
+    if(!name){ alert('Enter a project name.'); return; }
+    if(!state.scenes.length){ alert('Add at least one scene before saving.'); return; }
+    // #9: warn if a different saved project already uses this name
+    if(name !== state.currentSavedName){
+      fetch('/api/projects')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var exists = data.projects && data.projects.some(function(p){ return p.name===name; });
+          if(exists && !confirm('"'+name+'" already exists. Overwrite it?')) return;
+          performSave(name);
+        })
+        .catch(function(){ performSave(name); });
+    } else {
+      performSave(name);
+    }
   }
 
   // ── Load project ───────────────────────────────────────────────────────────
@@ -1561,11 +1672,12 @@
           if(s.planData){ state.planData=s.planData; $('#plan-preview').src=s.planData; $('#plan-preview-wrap').hidden=false; $('#plan-controls').style.display=''; }
           state.dotType=s.dotType||'circle';
           $$('.dot-type-btn').forEach(function(btn){ btn.classList.toggle('active', btn.dataset.type===state.dotType); });
-          $('#dot-rotation-row').style.display = state.dotType==='arrow' ? '' : 'none';
+    
           if(s.planSize){ state.planSize=s.planSize; $('#plan-size-slider').value=s.planSize; applyPlanSize(); }
           if(s.dotSize){ state.dotSize=s.dotSize; $('#dot-size-slider').value=s.dotSize; }
           if(s.dotActiveColor){ state.dotActiveColor=s.dotActiveColor; $('#dot-active-color').value=s.dotActiveColor; }
           if(s.dotInactiveColor){ state.dotInactiveColor=s.dotInactiveColor; $('#dot-inactive-color').value=s.dotInactiveColor; }
+          if(s.dotRingColor){ state.dotRingColor=s.dotRingColor; $('#dot-ring-color').value=s.dotRingColor; }
           $('#setting-compass').checked = s.compass !== false;
           drawDotPreviews(); state.firstSceneId=s.firstSceneId||null;
         }
@@ -1579,6 +1691,7 @@
         updateFirstSceneBadges(); updatePreviewOverlay();
         refreshSceneRendering();
         if(state.scenes.length) activateScene(state.scenes[0].id);
+        state.currentSavedName = (project.settings && project.settings.title) ? project.settings.title : null;
         alert('Project loaded: '+state.scenes.length+' scene(s).');
       })
       .catch(function(err){ alert('Import error: '+err.message); });
