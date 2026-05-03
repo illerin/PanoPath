@@ -21,6 +21,7 @@
         <button class="dropdown-item" id="load-btn">Open saved project…</button>
         <button class="dropdown-item" id="import-zip-btn">Import ZIP…</button>
         <button class="dropdown-item" id="save-btn">Save project</button>
+        <button class="dropdown-item" id="save-as-btn">Save as…</button>
         <div class="dropdown-divider"></div>
         <button class="dropdown-item" id="preview-tour-btn">Preview tour</button>
       </div>
@@ -35,7 +36,7 @@
 <div class="modal-bg" id="appearance-panel" hidden>
   <div class="settings-modal">
     <div class="settings-modal-header">
-      <span>Settings <span class="settings-version">v0.5.10</span></span>
+      <span>Settings <span class="settings-version">v0.5.15</span></span>
       <button class="panel-close" id="appearance-close" title="Close"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
     </div>
 
@@ -287,11 +288,6 @@
     </div>
     <div class="plan-dot-overlay" id="plan-dot-overlay" hidden>
       <div class="place-msg">Click anywhere to place dot on plan — Esc to cancel</div>
-    </div>
-    <div class="viewer-toolbar" id="viewer-toolbar" hidden>
-      <button class="vtb-btn" id="btn-hotspot-info"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/><circle cx="12" cy="12" r="10"/></svg>Info Hotspot</button>
-      <button class="vtb-btn" id="btn-hotspot-link"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>Link Hotspot</button>
-      <button class="vtb-btn" id="btn-set-view"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Set Initial View</button>
     </div>
     <div id="editor-compass" hidden>
       <svg viewBox="0 0 60 60" width="56" height="56">

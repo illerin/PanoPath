@@ -23,6 +23,9 @@
       location: { bg:'#ffab91', icon:'#7b1500' }
     },
     cancelUpload: false,
+    imgSettingsCollapsed: true,
+    floorPlanCollapsed: false,
+    compassCollapsed: false,
     btn1TextColor:'#ffffff', btn1BgColor:'#000000',
     btn2TextColor:'#ffffff', btn2BgColor:'#000000',
     btn3TextColor:'#ffffff', btn3BgColor:'#e94560',
@@ -68,6 +71,7 @@
     sc.sourceUrl = sc.sourceUrl || null;
     sc.planDot = sc.planDot || null;
     if(sc.planDot && sc.planDot.rotation == null) sc.planDot.rotation = 0;
+    sc.imageRotation = sc.imageRotation || 0;
     sc.compassEnabled = sc.compassEnabled !== false;
     sc.northOffset = sc.northOffset || 0;
     return sc;
@@ -564,10 +568,10 @@
   $('#plan-upload-btn').addEventListener('click', function(){ $('#plan-file-input').click(); });
   $('#plan-file-input').addEventListener('change', function(e){
     var f=e.target.files[0]; if(!f) return;
-    readAsDataURL(f, function(data){ state.planData=data; $('#plan-preview').src=data; $('#plan-preview-wrap').hidden=false; $('#plan-controls').style.display=''; updatePreviewOverlay(); });
+    readAsDataURL(f, function(data){ state.planData=data; $('#plan-preview').src=data; $('#plan-preview-wrap').hidden=false; $('#plan-controls').style.display=''; updatePreviewOverlay(); var curSd=getActiveScene(); if(curSd) renderProps(curSd); });
     e.target.value='';
   });
-  $('#plan-remove-btn').addEventListener('click', function(){ state.planData=null; $('#plan-preview').src=''; $('#plan-preview-wrap').hidden=true; $('#plan-controls').style.display='none'; updatePreviewOverlay(); });
+  $('#plan-remove-btn').addEventListener('click', function(){ state.planData=null; $('#plan-preview').src=''; $('#plan-preview-wrap').hidden=true; $('#plan-controls').style.display='none'; updatePreviewOverlay(); var curSd=getActiveScene(); if(curSd) renderProps(curSd); });
   $('#plan-size-slider').addEventListener('input', function(){ state.planSize=parseInt(this.value,10); applyPlanSize(); updatePreviewPlanDots(); });
   function applyPlanSize(){ var w=state.planSize||200, h=Math.round(w*0.75), wrap=$('#preview-plan-wrap'); if(wrap){ wrap.style.width=w+'px'; wrap.style.height=h+'px'; } }
 
@@ -614,10 +618,7 @@
   });
 
 
-  // ── Toolbar ────────────────────────────────────────────────────────────────
-  $('#btn-hotspot-info').addEventListener('click', function(){ startHotspotPlacement('info'); });
-  $('#btn-hotspot-link').addEventListener('click', function(){ startHotspotPlacement('link'); });
-  $('#btn-set-view').addEventListener('click', setInitialView);
+  // ── Toolbar (removed — hotspot buttons now in props panel) ────────────────
   document.addEventListener('keydown', function(e){ if(e.key==='Escape') cancelPlacement(); });
   setInterval(updateEditorCompass, 80);
 
@@ -651,7 +652,7 @@
     state.logoData=null; state.planData=null; state.currentSavedName=null;
     resetSettingsToDefault();
     $$('.scene-item').forEach(function(el){ el.remove(); }); $('#drop-hint').style.display='';
-    $('#viewer-empty').hidden=false; $('#viewer-toolbar').hidden=true;
+    $('#viewer-empty').hidden=false;
     $('#props-inner').innerHTML='<div class="props-empty">Select a scene to edit</div>';
     $('#project-title').value='My Panorama Tour';
     updatePreviewOverlay();
@@ -680,6 +681,14 @@
       $('#save-modal').hidden=false;
       setTimeout(function(){ $('#save-name-input').select(); },50);
     }
+  });
+
+  // Save As — always opens the name modal
+  $('#save-as-btn').addEventListener('click', function(){
+    $('#project-menu').hidden=true;
+    $('#save-name-input').value=$('#project-title').value||'';
+    $('#save-modal').hidden=false;
+    setTimeout(function(){ $('#save-name-input').select(); },50);
   });
 
   // Preview tour (renamed from Test Viewer)
@@ -880,7 +889,7 @@
     var item=$('#scene-list [data-id="'+id+'"]'); if(item) item.remove();
     if(state.firstSceneId===id){ state.firstSceneId=state.scenes.length?state.scenes[0].id:null; updateFirstSceneBadges(); }
     if(state.activeSceneId===id){
-      state.activeSceneId=null; $('#viewer-empty').hidden=false; $('#viewer-toolbar').hidden=true;
+      state.activeSceneId=null; $('#viewer-empty').hidden=false;
       $('#props-inner').innerHTML='<div class="props-empty">Select a scene to edit</div>';
       if(state.scenes.length) activateScene(state.scenes[0].id);
     }
@@ -893,7 +902,7 @@
     var sd=getSceneById(id);
     if(!sd) return;
     $$('.scene-item').forEach(function(el){ el.classList.toggle('active',el.dataset.id===id); });
-    state.activeSceneId=id; $('#viewer-empty').hidden=true; $('#viewer-toolbar').hidden=false;
+    state.activeSceneId=id; $('#viewer-empty').hidden=true;
     var viewToUse=overrideView||sd.initialView;
     if(!state.marzScenes[id]){
       try {
@@ -950,21 +959,165 @@
     });
     ng.appendChild(ni); pi.appendChild(ng);
 
-    pi.appendChild(el('hr','prop-divider')); pi.appendChild(el('div','prop-section','Initial View'));
-    var vi=el('div','initial-view-info');
-    function updateVI(){ vi.innerHTML=sd.initialViewSet?'<span class="view-set-badge">✓ View set</span>':'<span style="color:#888;font-size:12px">Pan to angle then click Set View</span>'; }
-    updateVI(); sd._updateViewInfo=updateVI; pi.appendChild(vi);
+    // ── Image Settings (collapsible, collapsed by default) ─────────
+    pi.appendChild(el('hr','prop-divider'));
+    var imgHeader = el('div','collapsible-header');
+    imgHeader.appendChild(el('span','prop-section','Image Settings'));
+    var imgArrow = el('span','collapsible-arrow', state.imgSettingsCollapsed ? '▶' : '▼');
+    imgHeader.appendChild(imgArrow);
+    pi.appendChild(imgHeader);
+    var imgBody = el('div','collapsible-body');
+    imgBody.style.display = state.imgSettingsCollapsed ? 'none' : '';
+    imgHeader.addEventListener('click', function(){
+      state.imgSettingsCollapsed = !state.imgSettingsCollapsed;
+      imgBody.style.display = state.imgSettingsCollapsed ? 'none' : '';
+      imgArrow.textContent = state.imgSettingsCollapsed ? '▶' : '▼';
+    });
 
-    pi.appendChild(el('hr','prop-divider')); pi.appendChild(el('div','prop-section','Starting Scene'));
-    var fr=el('div','prop-group'); fr.style.cssText='flex-direction:row;align-items:center;gap:8px;';
+    // ── Rotation ────────────────────────────────────────────────────
+    {
+      var isFlat = isFlatScene(sd);
+      var rotLabel = el('div','prop-label','Rotate Image');
+      rotLabel.style.marginBottom='6px';
+      if(!isFlat){
+        var rotHint = el('span','');
+        rotHint.style.cssText='font-size:11px;color:#555;margin-left:6px;font-weight:400;';
+        rotHint.textContent='(flat images only)';
+        rotLabel.appendChild(rotHint);
+      }
+      imgBody.appendChild(rotLabel);
+      var rotBtnRow = el('div','');
+      rotBtnRow.style.cssText='display:flex;gap:6px;';
+      // 0/90/180/270 — each sets the absolute rotation from source, no accumulation issues
+      [{label:'0°', deg:0},{label:'90°', deg:90},{label:'180°', deg:180},{label:'270°', deg:270}].forEach(function(opt){
+        var isCurrent = (sd.imageRotation||0) === opt.deg;
+        var rb = el('button', isCurrent ? 'btn btn-sm btn-primary' : 'btn btn-sm', opt.label);
+        rb.style.flex='1';
+        if(!isFlat){
+          rb.disabled=true;
+          rb.style.opacity='0.35';
+          rb.title='Only available for flat images';
+        } else {
+          rb.addEventListener('click', function(){
+            if((sd.imageRotation||0) === opt.deg) return; // already at this rotation
+            rb.disabled=true; rb.textContent='…';
+            fetch('/api/rotate-flat/'+sd.id, {
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({ degrees: opt.deg, currentRotation: 0 })
+            })
+            .then(function(r){ return r.json(); })
+            .then(function(result){
+              if(result.error){ alert('Rotation failed: '+result.error); rb.disabled=false; rb.textContent=opt.label; return; }
+              sd.flat = result.flat;
+              // Add cache buster to flat URL so browser fetches the new rotated image
+              sd.flat.url = result.flat.url + '?t=' + Date.now();
+              sd.imageRotation = opt.deg;
+              sd.previewUrl = result.previewUrl + '?t=' + Date.now();
+              var oldMs = state.marzScenes[sd.id];
+              if(oldMs){ try{ state.marzViewer.destroyScene(oldMs); }catch(e){} }
+              delete state.marzScenes[sd.id];
+              var thumb = document.querySelector('#scene-list [data-id="'+sd.id+'"] .scene-thumb');
+              if(thumb) thumb.src = sd.previewUrl;
+              try{ activateScene(sd.id); }catch(e){ console.error('activateScene after rotate:', e); }
+              // Re-render props so the active button updates
+              var curSd=getActiveScene(); if(curSd) renderProps(curSd);
+            })
+            .catch(function(err){ alert('Rotation failed: '+err.message); rb.disabled=false; rb.textContent=opt.label; });
+          });
+        }
+        rotBtnRow.appendChild(rb);
+      });
+      imgBody.appendChild(rotBtnRow);
+      imgBody.appendChild(el('hr','prop-divider'));
+    }
+
+    // ── Projection ──────────────────────────────────────────────────
+    var hasSource = !!sd.sourceUrl;
+    if (!hasSource) {
+      var noSrcNote = el('p','');
+      noSrcNote.style.cssText='font-size:12px;color:#666;line-height:1.5;';
+      noSrcNote.textContent='No source image stored. Re-import this image to enable projection switching.';
+      imgBody.appendChild(noSrcNote);
+    } else {
+      var curProjLabel = sd.projection === 'flat' ? 'Flat' : (sd.fisheyeFov ? 'Fisheye (' + sd.fisheyeFov + '°)' : 'Panorama');
+      var curNote = el('p','');
+      curNote.style.cssText='font-size:12px;color:#888;margin-bottom:8px;';
+      curNote.textContent='Current: ' + curProjLabel + '. Switch to:';
+      imgBody.appendChild(curNote);
+
+      var projRow = el('div','');
+      projRow.style.cssText='display:flex;gap:6px;';
+
+      function makeProjBtn(label, targetProj) {
+        var isCurrent = (targetProj === 'flat'    && sd.projection === 'flat') ||
+                        (targetProj === 'cube'    && sd.projection === 'cube' && !sd.fisheyeFov) ||
+                        (targetProj === 'fisheye' && sd.projection === 'cube' && !!sd.fisheyeFov);
+        var btn = el('button', isCurrent ? 'btn btn-sm btn-primary' : 'btn btn-sm', label);
+        btn.style.flex = '1';
+        btn.disabled = isCurrent;
+        if (!isCurrent) {
+          btn.addEventListener('click', function(){
+            if (targetProj === 'fisheye') {
+              showFovModal(sd);
+            } else {
+              confirmReproject(sd, targetProj, null);
+            }
+          });
+        }
+        return btn;
+      }
+
+      projRow.appendChild(makeProjBtn('Flat', 'flat'));
+      projRow.appendChild(makeProjBtn('Panorama', 'cube'));
+      projRow.appendChild(makeProjBtn('Fisheye', 'fisheye'));
+      imgBody.appendChild(projRow);
+    }
+
+    pi.appendChild(imgBody);
+
+    // ── Scene Controls (Initial View + Starting Scene combined) ─────
+    pi.appendChild(el('hr','prop-divider')); pi.appendChild(el('div','prop-section','Scene Controls'));
+    var scRow=el('div',''); scRow.style.cssText='display:flex;gap:6px;margin-top:6px;';
+
+    // Set Initial View button
+    var sivBtn=el('button', sd.initialViewSet ? 'btn btn-sm btn-primary' : 'btn btn-sm', sd.initialViewSet ? '✓ View Set' : 'Set Initial View');
+    sivBtn.style.flex='1';
+    sivBtn.addEventListener('click',function(){
+      setInitialView();
+      sivBtn.className='btn btn-sm btn-primary';
+      sivBtn.textContent='✓ View Set';
+    });
+    sd._updateViewInfo=function(){ sivBtn.className=sd.initialViewSet?'btn btn-sm btn-primary':'btn btn-sm'; sivBtn.textContent=sd.initialViewSet?'✓ View Set':'Set Initial View'; };
+    scRow.appendChild(sivBtn);
+
+    // Set as First button
     var isFirst=state.firstSceneId===sd.id;
-    var fb=el('span',isFirst?'view-set-badge':'',isFirst?'★ First scene':'Not first scene'); fb.style.fontSize='12px';
-    var sfb=el('button','btn btn-sm','Set as First'); sfb.style.display=isFirst?'none':'';
-    sfb.addEventListener('click',function(){ state.firstSceneId=sd.id; updateFirstSceneBadges(); fb.className='view-set-badge'; fb.textContent='★ First scene'; sfb.style.display='none'; });
-    fr.appendChild(fb); fr.appendChild(sfb); pi.appendChild(fr);
+    var sfb=el('button', isFirst ? 'btn btn-sm btn-primary' : 'btn btn-sm', isFirst ? '★ First Scene' : 'Set as First');
+    sfb.style.flex='1';
+    sfb.addEventListener('click',function(){
+      state.firstSceneId=sd.id;
+      updateFirstSceneBadges();
+      sfb.className='btn btn-sm btn-primary';
+      sfb.textContent='★ First Scene';
+    });
+    scRow.appendChild(sfb);
+    pi.appendChild(scRow);
 
     if($('#setting-compass').checked){
-      pi.appendChild(el('hr','prop-divider')); pi.appendChild(el('div','prop-section','Compass'));
+      pi.appendChild(el('hr','prop-divider'));
+      var cmpHeader = el('div','collapsible-header');
+      cmpHeader.appendChild(el('span','prop-section','Compass'));
+      var cmpArrow = el('span','collapsible-arrow', state.compassCollapsed ? '▶' : '▼');
+      cmpHeader.appendChild(cmpArrow);
+      pi.appendChild(cmpHeader);
+      var cmpBody = el('div','collapsible-body');
+      cmpBody.style.display = state.compassCollapsed ? 'none' : '';
+      cmpHeader.addEventListener('click', function(){
+        state.compassCollapsed = !state.compassCollapsed;
+        cmpBody.style.display = state.compassCollapsed ? 'none' : '';
+        cmpArrow.textContent = state.compassCollapsed ? '▶' : '▼';
+      });
       var cg=el('div','prop-group');
       var compassToggle=document.createElement('label');
       compassToggle.className='panel-label';
@@ -1007,44 +1160,92 @@
       northWrap.appendChild(northRow);
       if(!isFlatScene(sd)) northWrap.appendChild(northBtn);
       cg.appendChild(northWrap);
-      pi.appendChild(cg);
+      cmpBody.appendChild(cg);
+      pi.appendChild(cmpBody);
+    } else {
+      pi.appendChild(el('hr','prop-divider'));
+      var cmpOff = el('div','prop-section-hint');
+      cmpOff.innerHTML='Compass is off. Enable it in <strong>Settings → Viewer</strong>.';
+      pi.appendChild(cmpOff);
     }
 
     if(state.planData){
-      pi.appendChild(el('hr','prop-divider')); pi.appendChild(el('div','prop-section','Floor Plan Dot'));
+      pi.appendChild(el('hr','prop-divider'));
+      var fpHeader = el('div','collapsible-header');      fpHeader.appendChild(el('span','prop-section','Floor Plan Dot'));
+      var fpArrow = el('span','collapsible-arrow', state.floorPlanCollapsed ? '▶' : '▼');
+      fpHeader.appendChild(fpArrow);
+      pi.appendChild(fpHeader);
+      var fpBody = el('div','collapsible-body');
+      fpBody.style.display = state.floorPlanCollapsed ? 'none' : '';
+      fpHeader.addEventListener('click', function(){
+        state.floorPlanCollapsed = !state.floorPlanCollapsed;
+        fpBody.style.display = state.floorPlanCollapsed ? 'none' : '';
+        fpArrow.textContent = state.floorPlanCollapsed ? '▶' : '▼';
+      });
+
       var dotBtn=el('button','plan-dot-btn');
       var dotInd=el('span','plan-dot-indicator '+(sd.planDot?'plan-dot-set':'plan-dot-unset'));
       var dotTxt=el('span','',sd.planDot?'Dot placed — click to move':'Click to place dot on plan');
       dotBtn.appendChild(dotInd); dotBtn.appendChild(dotTxt);
       dotBtn.addEventListener('click',function(){ startPlanDotPlacement(sd,dotInd,dotTxt); });
-      pi.appendChild(dotBtn);
+      fpBody.appendChild(dotBtn);
       if(sd.planDot){
         if(sd.planDot.rotation == null) sd.planDot.rotation = 0;
         var clearBtn=el('button','btn btn-sm','Remove Dot'); clearBtn.style.marginTop='4px';
         clearBtn.addEventListener('click',function(){ sd.planDot=null; dotInd.className='plan-dot-indicator plan-dot-unset'; dotTxt.textContent='Click to place dot on plan'; clearBtn.remove(); updatePreviewPlanDots(); });
-        pi.appendChild(clearBtn);
-        if(state.dotType==='arrow'){
-          var rotGroup=el('div','prop-group');
-          rotGroup.appendChild(el('div','prop-label','Direction'));
-          var rotWrap=el('div','');
-          rotWrap.style.cssText='display:flex;align-items:center;gap:8px;';
-          var rotSlider=document.createElement('input');
-          rotSlider.type='range'; rotSlider.min='0'; rotSlider.max='359'; rotSlider.step='1';
-          rotSlider.value=String(sd.planDot.rotation||0);
-          rotSlider.className='panel-slider';
-          rotSlider.style.flex='1';
-          var rotVal=el('span','',String(sd.planDot.rotation||0)+'°');
-          rotVal.style.cssText='color:#aaa;font-size:12px;min-width:38px;';
-          rotSlider.addEventListener('input',function(){
-            sd.planDot.rotation=parseInt(rotSlider.value,10)||0;
-            rotVal.textContent=sd.planDot.rotation+'°';
-            updatePreviewPlanDots();
+        fpBody.appendChild(clearBtn);
+
+        // ── Per-scene dot type ──────────────────────────────────────
+        fpBody.appendChild(el('div','prop-label','Dot Type'));
+        var dtRow=el('div',''); dtRow.style.cssText='display:flex;gap:6px;margin-top:4px;';
+        var dtTypes=['default','circle','arrow'];
+        var dtLabels={default:'Default',circle:'Dot',arrow:'Direction'};
+        var dtBtns={};
+        function updateDtBtns(){
+          dtTypes.forEach(function(t){
+            var isSel = (t==='default') ? !sd.planDot.dotType : sd.planDot.dotType===t;
+            dtBtns[t].className = isSel ? 'btn btn-sm btn-primary' : 'btn btn-sm';
           });
-          rotWrap.appendChild(rotSlider); rotWrap.appendChild(rotVal);
-          rotGroup.appendChild(rotWrap);
-          pi.appendChild(rotGroup);
+          var showRot = sd.planDot.dotType==='arrow' || (!sd.planDot.dotType && state.dotType==='arrow');
+          rotGroup.style.display = showRot ? '' : 'none';
         }
+        dtTypes.forEach(function(t){
+          var b=el('button','btn btn-sm',dtLabels[t]); b.style.flex='1';
+          dtBtns[t]=b;
+          b.addEventListener('click',function(){
+            if(t==='default') delete sd.planDot.dotType; else sd.planDot.dotType=t;
+            updateDtBtns(); updatePreviewPlanDots();
+          });
+          dtRow.appendChild(b);
+        });
+        fpBody.appendChild(dtRow);
+
+        // ── Rotation slider ─────────────────────────────────────────
+        var rotGroup=el('div','prop-group'); rotGroup.style.marginTop='6px';
+        rotGroup.appendChild(el('div','prop-label','Direction'));
+        var rotWrap=el('div',''); rotWrap.style.cssText='display:flex;align-items:center;gap:8px;';
+        var rotSlider=document.createElement('input');
+        rotSlider.type='range'; rotSlider.min='0'; rotSlider.max='359'; rotSlider.step='1';
+        rotSlider.value=String(sd.planDot.rotation||0);
+        rotSlider.className='panel-slider'; rotSlider.style.flex='1';
+        var rotVal=el('span','',String(sd.planDot.rotation||0)+'°');
+        rotVal.style.cssText='color:#aaa;font-size:12px;min-width:38px;';
+        rotSlider.addEventListener('input',function(){
+          sd.planDot.rotation=parseInt(rotSlider.value,10)||0;
+          rotVal.textContent=sd.planDot.rotation+'°';
+          updatePreviewPlanDots();
+        });
+        rotWrap.appendChild(rotSlider); rotWrap.appendChild(rotVal);
+        rotGroup.appendChild(rotWrap);
+        fpBody.appendChild(rotGroup);
+        updateDtBtns();
       }
+      pi.appendChild(fpBody);
+    } else {
+      pi.appendChild(el('hr','prop-divider'));
+      var fpOff = el('div','prop-section-hint');
+      fpOff.innerHTML='No floor plan uploaded. Add one using the <strong>Floor Plan</strong> button in the toolbar.';
+      pi.appendChild(fpOff);
     }
 
     pi.appendChild(el('hr','prop-divider')); pi.appendChild(el('div','prop-section','Hotspots'));
@@ -1053,61 +1254,19 @@
     var bi=el('button','btn','Info'); bi.style.flex='1'; bi.addEventListener('click',function(){ startHotspotPlacement('info'); });
     var bl=el('button','btn','Link'); bl.style.flex='1'; bl.addEventListener('click',function(){ startHotspotPlacement('link'); });
     br.appendChild(bi); br.appendChild(bl); pi.appendChild(br);
-
-    // ── Projection section ─────────────────────────────────────────
-    pi.appendChild(el('hr','prop-divider'));
-    pi.appendChild(el('div','prop-section','Projection'));
-
-    var hasSource = !!sd.sourceUrl;
-    if (!hasSource) {
-      var noSrcNote = el('p','');
-      noSrcNote.style.cssText='font-size:12px;color:#666;line-height:1.5;';
-      noSrcNote.textContent='No source image stored. Re-import this image to enable projection switching.';
-      pi.appendChild(noSrcNote);
-    } else {
-      // Current projection label
-      var curProjLabel = sd.projection === 'flat' ? 'Flat' : (sd.fisheyeFov ? 'Fisheye (' + sd.fisheyeFov + '°)' : 'Panorama');
-      var curNote = el('p','');
-      curNote.style.cssText='font-size:12px;color:#888;margin-bottom:8px;';
-      curNote.textContent='Current: ' + curProjLabel + '. Switch to:';
-      pi.appendChild(curNote);
-
-      // 3-button row
-      var projRow = el('div','');
-      projRow.style.cssText='display:flex;gap:6px;';
-
-      function makeProjBtn(label, targetProj) {
-        var isCurrent = (targetProj === 'flat'    && sd.projection === 'flat') ||
-                        (targetProj === 'cube'    && sd.projection === 'cube' && !sd.fisheyeFov) ||
-                        (targetProj === 'fisheye' && sd.projection === 'cube' && !!sd.fisheyeFov);
-        var btn = el('button', isCurrent ? 'btn btn-sm btn-primary' : 'btn btn-sm', label);
-        btn.style.flex = '1';
-        btn.disabled = isCurrent;
-        if (!isCurrent) {
-          btn.addEventListener('click', function(){
-            if (targetProj === 'fisheye') {
-              // Show FOV picker modal before confirming
-              showFovModal(sd);
-            } else {
-              confirmReproject(sd, targetProj, null);
-            }
-          });
-        }
-        return btn;
-      }
-
-      projRow.appendChild(makeProjBtn('Flat', 'flat'));
-      projRow.appendChild(makeProjBtn('Panorama', 'cube'));
-      projRow.appendChild(makeProjBtn('Fisheye', 'fisheye'));
-      pi.appendChild(projRow);
-    }
   }
 
   function renderHotspotList(sd,container){
     container.innerHTML='';
     if(!sd.hotspots.length){ container.innerHTML='<div style="color:#555;font-size:12px;padding:4px">No hotspots yet</div>'; return; }
-    sd.hotspots.forEach(function(hs){
-      var item=el('div','hotspot-item');
+    // Sort: info hotspots first, then link hotspots
+    var sorted = sd.hotspots.slice().sort(function(a,b){
+      if(a.type==='info' && b.type!=='info') return -1;
+      if(a.type!=='info' && b.type==='info') return 1;
+      return 0;
+    });
+    sorted.forEach(function(hs){
+      var item=el('div','hotspot-item'+(hs.type==='info'?' hotspot-item-info':''));
       var iconSm=el('span','hs-icon-sm');
       if(hs.type==='info'){
         iconSm.textContent='i';
@@ -1259,7 +1418,6 @@
     }
     sd.initialViewSet=true;
     if(sd._updateViewInfo) sd._updateViewInfo();
-    var btn=$('#btn-set-view'); btn.textContent='✓ Saved'; setTimeout(function(){ btn.textContent='Set Initial View'; },1500);
   }
 
   // ── Projection switching ───────────────────────────────────────────────────
@@ -1461,7 +1619,9 @@
       if(!sd.planDot) return;
       var x=sd.planDot.x*canvas.width, y=sd.planDot.y*canvas.height;
       var isActive=sd.id===state.activeSceneId;
-      drawPlanSymbol(ctx,x,y,r,isActive?state.dotActiveColor:state.dotInactiveColor,state.dotType,sd.planDot.rotation||0,isActive,ringColor);
+      // Per-scene dotType overrides global; undefined means use global default
+      var effectiveDotType = sd.planDot.dotType || state.dotType;
+      drawPlanSymbol(ctx,x,y,r,isActive?state.dotActiveColor:state.dotInactiveColor,effectiveDotType,sd.planDot.rotation||0,isActive,ringColor);
     });
   }
 
@@ -1703,7 +1863,7 @@
         state.scenes.forEach(function(s){ var ms=state.marzScenes[s.id]; if(ms){ try{ state.marzViewer.destroyScene(ms); }catch(e){} } });
         state.scenes=[]; state.marzScenes={}; state.activeSceneId=null; state.firstSceneId=null; state.logoData=null; state.planData=null;
         $$('.scene-item').forEach(function(el){ el.remove(); }); $('#drop-hint').style.display='';
-        $('#viewer-empty').hidden=false; $('#viewer-toolbar').hidden=true;
+        $('#viewer-empty').hidden=false;
         $('#props-inner').innerHTML='<div class="props-empty">Select a scene to edit</div>';
         if(project.settings){
           var s=project.settings;
@@ -1741,6 +1901,7 @@
           wireBtnColors(1); wireBtnColors(2); wireBtnColors(3);
           if(s.logoData){ state.logoData=s.logoData; $('#logo-preview').src=s.logoData; $('#logo-preview-wrap').hidden=false; }
           if(s.planData){ state.planData=s.planData; $('#plan-preview').src=s.planData; $('#plan-preview-wrap').hidden=false; $('#plan-controls').style.display=''; }
+          else { state.planData=null; $('#plan-preview').src=''; $('#plan-preview-wrap').hidden=true; $('#plan-controls').style.display='none'; }
           state.dotType=s.dotType||'circle';
           $$('.dot-type-btn').forEach(function(btn){ btn.classList.toggle('active', btn.dataset.type===state.dotType); });
     

@@ -257,6 +257,7 @@ async function processImage(req, res, sceneId, outDir, imgPath) {
     console.log(`Flat scene: ${flatWidth}x${flatHeight}`);
 
     const flatBuffer = await sharp(fileBuffer)
+      .rotate()           // auto-apply and strip EXIF orientation (fixes phone photos)
       .flatten({ background: { r: 255, g: 255, b: 255 } })
       .resize(flatWidth, flatHeight, { fit: 'inside', withoutEnlargement: true })
       .jpeg({ quality: 90 })
@@ -426,7 +427,7 @@ app.post('/api/export', async (req, res) => {
   archive.append(generateReadme(settings, scenes, 'full'), { name: 'README.txt' });
   archive.append(JSON.stringify({
     version: 1,
-    exportedWith: 'PanoPath by illerin v0.5.10',
+    exportedWith: 'PanoPath by illerin v0.5.11',
     exportedAt: new Date().toISOString(),
     settings,
     scenes
@@ -520,7 +521,7 @@ app.post('/api/backup/export', express.json({ limit: '10mb' }), async (req, res)
 
   const manifest = {
     createdAt: now.toISOString(),
-    exportedWith: 'PanoPath by illerin v0.5.10',
+    exportedWith: 'PanoPath by illerin v0.5.11',
     includesProjects: !!includeProjects,
     includesPresets: !!includePresets,
   };
@@ -712,6 +713,75 @@ app.delete('/api/scene/:id', (req, res) => {
   const d = path.join(TILES_DIR, req.params.id);
   if (fs.existsSync(d)) fs.rmSync(d, { recursive: true });
   res.json({ ok: true });
+});
+
+// ── Rotate flat scene image ───────────────────────────────────────────────────
+app.post('/api/rotate-flat/:id', async (req, res) => {
+  const sceneId    = req.params.id;
+  const outDir     = path.join(TILES_DIR, sceneId);
+  const sourcePath = path.join(outDir, 'source.jpg');
+  const flatPath   = path.join(outDir, 'flat.jpg');
+  const degrees    = parseInt(req.body && req.body.degrees, 10);
+
+  if (![90, 180, 270, 0].includes(degrees)) {
+    return res.status(400).json({ error: 'degrees must be 0, 90, 180, or 270' });
+  }
+
+  // Prefer source.jpg (original quality); fall back to flat.jpg for older scenes
+  const srcPath = fs.existsSync(sourcePath) ? sourcePath : flatPath;
+  if (!fs.existsSync(srcPath)) {
+    return res.status(404).json({ error: 'No image found for this scene' });
+  }
+
+  try {
+    const currentRotation = parseInt(req.body && req.body.currentRotation, 10) || 0;
+    const totalRotation   = (currentRotation + degrees) % 360;
+    console.log(`rotate-flat: scene=${sceneId} src=${srcPath} degrees=${degrees} total=${totalRotation}`);
+
+    const MAX_FLAT = 4096;
+
+    // Pass 1: normalise EXIF orientation into actual pixels, strip the tag
+    const normalised = await sharp(srcPath)
+      .rotate()
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .jpeg({ quality: 95 })
+      .toBuffer();
+
+    // Pass 2: apply the explicit rotation on the now-clean buffer
+    const rotated = totalRotation !== 0
+      ? await sharp(normalised).rotate(totalRotation).jpeg({ quality: 92 }).toBuffer()
+      : normalised;
+
+    const newMeta = await sharp(rotated).metadata();
+    console.log(`rotate-flat: result ${newMeta.width}x${newMeta.height}`);
+
+    // Scale down if needed
+    const scale = Math.min(1, MAX_FLAT / Math.max(newMeta.width, newMeta.height));
+    const flatWidth  = Math.max(1, Math.round(newMeta.width  * scale));
+    const flatHeight = Math.max(1, Math.round(newMeta.height * scale));
+
+    const finalBuf = scale < 1
+      ? await sharp(rotated).resize(flatWidth, flatHeight).jpeg({ quality: 92 }).toBuffer()
+      : rotated;
+
+    fs.writeFileSync(flatPath, finalBuf);
+
+    // Regenerate preview
+    await sharp(finalBuf)
+      .resize(512, 256, { fit: 'inside', background: '#fff' })
+      .jpeg({ quality: 75 })
+      .toFile(path.join(outDir, 'preview.jpg'));
+
+    res.json({
+      ok: true,
+      totalRotation,
+      flat: { width: flatWidth, height: flatHeight, url: `/tiles/${sceneId}/flat.jpg` },
+      previewUrl: `/tiles/${sceneId}/preview.jpg`
+    });
+  } catch(err) {
+    console.error('rotate-flat error:', err);
+    res.status(500).json({ error: 'Rotation failed: ' + err.message });
+  }
 });
 
 // ── Reprocess existing scene with a different projection ─────────────────────
@@ -1326,7 +1396,7 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
   #plan-container.plan-maximised{left:50%!important;right:auto!important;bottom:16px!important;transform:translateX(-50%)!important;width:min(92vw,560px)!important;height:min(68vh,420px)!important;}
   #plan-restore-btn{bottom:16px;right:12px;}
 }
-.hotspot-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;transform:translate(-50%,-50%);cursor:default;}
+.hotspot-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;transform:translate(-50%,-50%);cursor:default;position:relative;}
 .hs-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 2px 10px rgba(0,0,0,0.6);transition:transform 0.15s;padding:8px;}
 .hotspot-wrap:hover .hs-icon{transform:scale(1.15);}
 .hs-info{background:#2196F3;font-size:20px;}
@@ -1337,13 +1407,13 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 .hs-link-star{background:#FFCC80;color:#7B3E00;}
 .hs-link-eye{background:#80DEEA;color:#004D55;}
 .hs-link-location{background:#FFAB91;color:#7B1500;}
-.hs-label{background:rgba(0,0,0,0.82);color:#fff;padding:5px 12px;border-radius:10px;font-size:12px;max-width:200px;text-align:center;display:block;width:max-content;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:all 0.2s ease;}
-.hs-label-expanded{white-space:normal;overflow:visible;text-overflow:unset;max-width:260px;}`;
+.hs-label{background:rgba(0,0,0,0.82);color:#fff;padding:5px 12px;border-radius:10px;font-size:12px;max-width:200px;text-align:center;position:absolute;top:calc(100% + 4px);left:50%;transform:translateX(-50%);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:all 0.2s ease;}
+.hs-label-expanded{white-space:normal;overflow:visible;text-overflow:unset;width:240px;text-align:left;}`;
 }
 
 function generateReadme(settings, scenes, exportType){
   exportType = exportType || 'full';
-  const APP_VERSION = '0.5.10';
+  const APP_VERSION = '0.5.15';
   const isSlim = exportType === 'slim';
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
