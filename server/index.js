@@ -18,11 +18,118 @@ const TILES_DIR      = path.join(__dirname, '../tmp/tiles');
 const PROJECTS_DIR   = path.join(__dirname, '../tmp/projects');
 const MARZIPANO_PATH = path.join(__dirname, '../public/js/marzipano.js');
 const MARZIPANO_CDN  = 'https://cdn.jsdelivr.net/npm/marzipano@0.10.2/dist/marzipano.js';
+const SCENE_ID_RE    = /^[A-Za-z0-9_-]{1,128}$/;
 
 fs.mkdirSync(UPLOAD_DIR,   { recursive: true });
 fs.mkdirSync(TILES_DIR,    { recursive: true });
 fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 fs.mkdirSync(path.dirname(MARZIPANO_PATH), { recursive: true });
+
+function isSafeSceneId(sceneId) {
+  return typeof sceneId === 'string' && SCENE_ID_RE.test(sceneId);
+}
+
+function getSceneDir(sceneId) {
+  if (!isSafeSceneId(sceneId)) throw new Error('Invalid scene id');
+  return path.join(TILES_DIR, sceneId);
+}
+
+function resolveWithin(baseDir, relativePath) {
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(baseDir, relativePath);
+  const relative = path.relative(resolvedBase, resolvedTarget);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Invalid path');
+  }
+  return resolvedTarget;
+}
+
+function copyDirectoryRecursive(srcDir, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) copyDirectoryRecursive(srcPath, destPath);
+    else fs.copyFileSync(srcPath, destPath);
+  }
+}
+
+function getPathSize(targetPath) {
+  if (!fs.existsSync(targetPath)) return 0;
+  const stat = fs.statSync(targetPath);
+  if (!stat.isDirectory()) return stat.size;
+  let total = 0;
+  for (const entry of fs.readdirSync(targetPath, { withFileTypes: true })) {
+    total += getPathSize(path.join(targetPath, entry.name));
+  }
+  return total;
+}
+
+function collectReferencedSceneIds() {
+  const ids = new Set();
+  if (!fs.existsSync(PROJECTS_DIR)) return ids;
+  const projectFiles = fs.readdirSync(PROJECTS_DIR).filter(f => f.endsWith('.json') && f !== '_presets.json');
+  for (const file of projectFiles) {
+    try {
+      const project = JSON.parse(fs.readFileSync(path.join(PROJECTS_DIR, file), 'utf8'));
+      for (const scene of project.scenes || []) {
+        if (isSafeSceneId(scene && scene.id)) ids.add(scene.id);
+      }
+    } catch (_) {}
+  }
+  return ids;
+}
+
+function listOrphanTileDirs() {
+  const referenced = collectReferencedSceneIds();
+  if (!fs.existsSync(TILES_DIR)) return [];
+  return fs.readdirSync(TILES_DIR)
+    .filter(name => isSafeSceneId(name) && !referenced.has(name))
+    .map(name => {
+      const dir = getSceneDir(name);
+      return { id: name, path: dir, size: getPathSize(dir) };
+    });
+}
+
+function buildImportValidation(projectJson, tileEntries) {
+  const scenes = Array.isArray(projectJson && projectJson.scenes) ? projectJson.scenes : [];
+  const warnings = [];
+  const seen = new Set();
+  const duplicateIds = [];
+  const missingTileScenes = [];
+  const tileRoots = new Set();
+
+  for (const scene of scenes) {
+    if (!scene || !scene.id) continue;
+    if (seen.has(scene.id)) duplicateIds.push(scene.id);
+    seen.add(scene.id);
+  }
+
+  for (const entry of tileEntries) {
+    const rel = entry.path.replace(/^tiles\//, '');
+    const root = rel.split(/[\\/]/)[0];
+    if (root) tileRoots.add(root);
+  }
+
+  for (const scene of scenes) {
+    if (!scene || !scene.id) continue;
+    if (!tileRoots.has(scene.id)) missingTileScenes.push(scene.id);
+  }
+
+  const unexpectedTileRoots = Array.from(tileRoots).filter(id => !seen.has(id));
+  if (duplicateIds.length) warnings.push('Duplicate scene IDs found: ' + duplicateIds.join(', '));
+  if (missingTileScenes.length) warnings.push('Scenes missing tile files: ' + missingTileScenes.join(', '));
+  if (unexpectedTileRoots.length) warnings.push('Tile folders not referenced by project.json: ' + unexpectedTileRoots.join(', '));
+
+  return {
+    sceneCount: scenes.length,
+    tileFileCount: tileEntries.length,
+    duplicateIds,
+    missingTileScenes,
+    unexpectedTileRoots,
+    warnings
+  };
+}
 
 // ── Download Marzipano locally on first run ───────────────────────────────────
 function ensureMarzipano() {
@@ -329,16 +436,25 @@ app.post('/api/import-project', uploadZip.single('projectZip'), async (req, res)
       return res.status(400).json({ error: 'No project.json found in ZIP. Make sure you upload an exported PanoPath ZIP.' });
     }
 
+    const invalidScene = (projectJson.scenes || []).find(s => !isSafeSceneId(s && s.id));
+    if (invalidScene) {
+      try { fs.unlinkSync(zipPath); } catch(e) {}
+      return res.status(400).json({ error: 'Project contains an invalid scene id.' });
+    }
+
+    const validation = buildImportValidation(projectJson, tileEntries);
+
     // Write tiles to TILES_DIR
     for (const { path: entryPath, buf } of tileEntries) {
-      const dest = path.join(TILES_DIR, entryPath.replace(/^tiles\//, ''));
+      const rel = entryPath.replace(/^tiles\//, '');
+      const dest = resolveWithin(TILES_DIR, rel);
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, buf);
     }
 
     try { fs.unlinkSync(zipPath); } catch(e) {}
     console.log(`Imported project: ${projectJson.scenes?.length || 0} scenes, ${tileEntries.length} tile files`);
-    res.json({ ok: true, project: projectJson });
+    res.json({ ok: true, project: projectJson, validation });
   } catch (err) {
     try { fs.unlinkSync(zipPath); } catch(e) {}
     console.error('Import error:', err);
@@ -407,13 +523,23 @@ app.post('/api/presets', express.json({ limit: '10mb' }), (req, res) => {
 app.post('/api/import-check', (req, res) => {
   const { scenes } = req.body;
   if (!scenes) return res.status(400).json({ error: 'No scenes' });
-  res.json({ results: scenes.map(s => ({ id: s.id, exists: fs.existsSync(path.join(TILES_DIR, s.id)) })) });
+  for (const scene of scenes) {
+    if (!isSafeSceneId(scene && scene.id)) {
+      return res.status(400).json({ error: 'Invalid scene id' });
+    }
+  }
+  res.json({ results: scenes.map(s => ({ id: s.id, exists: fs.existsSync(getSceneDir(s.id)) })) });
 });
 
 // ── Export ZIP ────────────────────────────────────────────────────────────────
 app.post('/api/export', async (req, res) => {
   const { scenes, settings } = req.body;
   if (!scenes || !scenes.length) return res.status(400).json({ error: 'No scenes' });
+  for (const scene of scenes) {
+    if (!isSafeSceneId(scene && scene.id)) {
+      return res.status(400).json({ error: 'Invalid scene id' });
+    }
+  }
 
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', 'attachment; filename="panorama-tour.zip"');
@@ -451,7 +577,7 @@ app.post('/api/export', async (req, res) => {
   }
 
   for (const scene of scenes) {
-    const sceneDir = path.join(TILES_DIR, scene.id);
+    const sceneDir = getSceneDir(scene.id);
     if (fs.existsSync(sceneDir)) archive.directory(sceneDir, `tiles/${scene.id}`);
   }
   await archive.finalize();
@@ -461,6 +587,11 @@ app.post('/api/export', async (req, res) => {
 app.post('/api/export-slim', async (req, res) => {
   const { scenes, settings } = req.body;
   if (!scenes || !scenes.length) return res.status(400).json({ error: 'No scenes' });
+  for (const scene of scenes) {
+    if (!isSafeSceneId(scene && scene.id)) {
+      return res.status(400).json({ error: 'Invalid scene id' });
+    }
+  }
 
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', 'attachment; filename="tour-hosting.zip"');
@@ -489,7 +620,7 @@ app.post('/api/export-slim', async (req, res) => {
 
   // Add tiles but skip source.jpg in each scene folder
   for (const scene of scenes) {
-    const sceneDir = path.join(TILES_DIR, scene.id);
+    const sceneDir = getSceneDir(scene.id);
     if (!fs.existsSync(sceneDir)) continue;
     const entries = fs.readdirSync(sceneDir);
     for (const entry of entries) {
@@ -545,8 +676,8 @@ app.post('/api/backup/export', express.json({ limit: '10mb' }), async (req, res)
         const project = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
         const scenes = project.scenes || [];
         for (const scene of scenes) {
-          if (!scene.id) continue;
-          const sceneDir = path.join(TILES_DIR, scene.id);
+          if (!isSafeSceneId(scene && scene.id)) continue;
+          const sceneDir = getSceneDir(scene.id);
           if (fs.existsSync(sceneDir)) {
             archive.directory(sceneDir, `data/tiles/${scene.id}`);
           }
@@ -595,7 +726,7 @@ app.post('/api/backup/import', uploadBackup.single('backup'), async (req, res) =
 
       } else if (p.startsWith('data/tiles/')) {
         const rel = p.replace('data/tiles/', '');
-        const dest = path.join(TILES_DIR, rel);
+        const dest = resolveWithin(TILES_DIR, rel);
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         const buf = await file.buffer();
         fs.writeFileSync(dest, buf);
@@ -607,6 +738,47 @@ app.post('/api/backup/import', uploadBackup.single('backup'), async (req, res) =
   } catch (e) {
     try { fs.unlinkSync(req.file.path); } catch(_) {}
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/storage/stats', (req, res) => {
+  try {
+    const projectFiles = fs.existsSync(PROJECTS_DIR)
+      ? fs.readdirSync(PROJECTS_DIR).filter(f => f.endsWith('.json') && f !== '_presets.json')
+      : [];
+    const tileDirs = fs.existsSync(TILES_DIR)
+      ? fs.readdirSync(TILES_DIR).filter(name => isSafeSceneId(name))
+      : [];
+    const orphanTiles = listOrphanTileDirs();
+
+    res.json({
+      stats: {
+        projectCount: projectFiles.length,
+        sceneTileCount: tileDirs.length,
+        projectBytes: getPathSize(PROJECTS_DIR),
+        tileBytes: getPathSize(TILES_DIR),
+        uploadBytes: getPathSize(UPLOAD_DIR),
+        presetsBytes: fs.existsSync(PRESETS_FILE) ? getPathSize(PRESETS_FILE) : 0,
+        orphanTileCount: orphanTiles.length,
+        orphanTileBytes: orphanTiles.reduce((sum, item) => sum + item.size, 0)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read storage stats: ' + err.message });
+  }
+});
+
+app.post('/api/storage/cleanup-orphans', (req, res) => {
+  try {
+    const orphans = listOrphanTileDirs();
+    let removedBytes = 0;
+    for (const orphan of orphans) {
+      removedBytes += orphan.size;
+      fs.rmSync(orphan.path, { recursive: true, force: true });
+    }
+    res.json({ ok: true, removedCount: orphans.length, removedBytes });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clean orphan tiles: ' + err.message });
   }
 });
 
@@ -710,15 +882,47 @@ app.get('/preview/:id/view', (req, res) => {
 
 // ── Delete scene ──────────────────────────────────────────────────────────────
 app.delete('/api/scene/:id', (req, res) => {
-  const d = path.join(TILES_DIR, req.params.id);
+  let d;
+  try {
+    d = getSceneDir(req.params.id);
+  } catch (_) {
+    return res.status(400).json({ error: 'Invalid scene id' });
+  }
   if (fs.existsSync(d)) fs.rmSync(d, { recursive: true });
   res.json({ ok: true });
+});
+
+app.post('/api/scene/:id/duplicate', (req, res) => {
+  let srcDir;
+  try {
+    srcDir = getSceneDir(req.params.id);
+  } catch (_) {
+    return res.status(400).json({ error: 'Invalid scene id' });
+  }
+  if (!fs.existsSync(srcDir)) return res.status(404).json({ error: 'Scene not found' });
+
+  const newId = uuidv4();
+  const destDir = getSceneDir(newId);
+  copyDirectoryRecursive(srcDir, destDir);
+
+  res.json({
+    ok: true,
+    sceneId: newId,
+    previewUrl: `/tiles/${newId}/preview.jpg`,
+    sourceUrl: fs.existsSync(path.join(destDir, 'source.jpg')) ? `/tiles/${newId}/source.jpg` : null,
+    flatUrl: fs.existsSync(path.join(destDir, 'flat.jpg')) ? `/tiles/${newId}/flat.jpg` : null
+  });
 });
 
 // ── Rotate flat scene image ───────────────────────────────────────────────────
 app.post('/api/rotate-flat/:id', async (req, res) => {
   const sceneId    = req.params.id;
-  const outDir     = path.join(TILES_DIR, sceneId);
+  let outDir;
+  try {
+    outDir = getSceneDir(sceneId);
+  } catch (_) {
+    return res.status(400).json({ error: 'Invalid scene id' });
+  }
   const sourcePath = path.join(outDir, 'source.jpg');
   const flatPath   = path.join(outDir, 'flat.jpg');
   const degrees    = parseInt(req.body && req.body.degrees, 10);
@@ -787,7 +991,12 @@ app.post('/api/rotate-flat/:id', async (req, res) => {
 // ── Reprocess existing scene with a different projection ─────────────────────
 app.post('/api/reprocess/:id', async (req, res) => {
   const sceneId = req.params.id;
-  const outDir  = path.join(TILES_DIR, sceneId);
+  let outDir;
+  try {
+    outDir = getSceneDir(sceneId);
+  } catch (_) {
+    return res.status(400).json({ error: 'Invalid scene id' });
+  }
   const sourcePath = path.join(outDir, 'source.jpg');
 
   if (!fs.existsSync(sourcePath)) {
@@ -992,6 +1201,8 @@ function generateViewerHTML(scenes, settings) {
   const planHtml  = planExt ? `<div id="plan-container" style="width:${pw}px;height:${ph}px">
       <div class="plan-controls-bar">
         <span class="plan-controls-title">Plan</span>
+        <button class="plan-filter-btn active" id="plan-filter-dots-btn" title="Toggle dots">Dots</button>
+        <button class="plan-filter-btn active" id="plan-filter-arrows-btn" title="Toggle directional arrows">Arrows</button>
         <button class="plan-ctrl-btn" id="plan-maximize-btn" title="Maximise">&#x26F6;</button>
         <button class="plan-ctrl-btn" id="plan-minimize-btn" title="Minimise">&minus;</button>
       </div>
@@ -1046,9 +1257,35 @@ function generateViewerHTML(scenes, settings) {
 }
 
 function generateAppJS(scenes, settings) {
+  function normalizePlanDotForViewer(planDot, defaultType) {
+    if (!planDot) return null;
+    const normalized = Object.assign({ rotation: 0 }, planDot);
+    const rawType = String(
+      normalized.dotType ||
+      normalized.type ||
+      normalized.shape ||
+      normalized.markerType ||
+      normalized.symbol ||
+      ''
+    ).toLowerCase();
+
+    if (rawType === 'arrow' || rawType === 'direction' || rawType === 'directional') {
+      normalized.dotType = 'arrow';
+    } else if (rawType === 'circle' || rawType === 'dot') {
+      normalized.dotType = 'circle';
+    } else if (normalized.rotation && defaultType !== 'arrow') {
+      normalized.dotType = 'arrow';
+    } else if (normalized.dotType !== 'arrow' && normalized.dotType !== 'circle') {
+      delete normalized.dotType;
+    }
+
+    return normalized;
+  }
+
   const scenesJson = JSON.stringify(scenes.map(s=>({
     id:s.id, name:s.name, levels:s.levels, faceSize:s.faceSize,
     initialView:s.initialView||{yaw:0,pitch:0,fov:1.5707963},
+    initialViewSet:!!s.initialViewSet,
     hotspots:(s.hotspots||[]).map(h => {
       if ((s.projection === 'flat' || s.isPano === false) && h) {
         return Object.assign({}, h, {
@@ -1058,7 +1295,7 @@ function generateAppJS(scenes, settings) {
       }
       return h;
     }),
-    planDot:s.planDot ? Object.assign({ rotation: 0 }, s.planDot) : null,
+    planDot:normalizePlanDotForViewer(s.planDot, settings.dotType || 'circle'),
     compassEnabled:s.compassEnabled !== false,
     northOffset:s.northOffset||0,
     projection:s.projection || (s.isPano===false ? 'flat' : 'cube'),
@@ -1077,7 +1314,18 @@ function generateAppJS(scenes, settings) {
   var scenes={}, currentId=null;
   var planContainer=document.getElementById('plan-container');
   var planRestoreBtn=document.getElementById('plan-restore-btn');
+  var planFilterDotsBtn=document.getElementById('plan-filter-dots-btn');
+  var planFilterArrowsBtn=document.getElementById('plan-filter-arrows-btn');
   var controlsEl=document.getElementById('controls');
+  var planVisibility={ dots:true, arrows:true };
+  function flatViewParams(sd){
+    var iv = sd.initialViewSet ? sd.initialView : null;
+    return {
+      x: (iv && iv.x!=null) ? iv.x : 0.5,
+      y: (iv && iv.y!=null) ? iv.y : 0.5,
+      zoom: (iv && iv.zoom!=null) ? iv.zoom : 0
+    };
+  }
   var ICON_SVGS={
     camera:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
     arrow:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>',
@@ -1111,11 +1359,12 @@ function generateAppJS(scenes, settings) {
         Marzipano.FlatView.limit.resolution(sd.flat.width),
         Marzipano.FlatView.limit.letterbox()
       );
+      var fp = flatViewParams(sd);
       var fView = new Marzipano.FlatView({
         mediaAspectRatio: sd.flat.width / sd.flat.height,
-        x: (sd.initialView && sd.initialView.x!=null) ? sd.initialView.x : 0.5,
-        y: (sd.initialView && sd.initialView.y!=null) ? sd.initialView.y : 0.5,
-        zoom: (sd.initialView && sd.initialView.zoom!=null) ? sd.initialView.zoom : 1
+        x: fp.x,
+        y: fp.y,
+        zoom: fp.zoom
       }, fLim);
       sc = viewer.createScene({source:fSrc,geometry:fGeo,view:fView,pinFirstLevel:true});
     } else {
@@ -1168,7 +1417,7 @@ function generateAppJS(scenes, settings) {
     var v=s.scene.view();
     if(s.data.projection==='flat'){
       var curZoom=typeof v.zoom==='function' ? v.zoom() : 1;
-      v.setParameters({ zoom: Math.min(curZoom*1.2, 8) });
+      v.setParameters({ zoom: Math.min((curZoom > 0 ? curZoom : 1)*1.2, 8) });
     } else {
       v.setFov(Math.max(v.fov()*0.8, 0.2));
     }
@@ -1178,7 +1427,7 @@ function generateAppJS(scenes, settings) {
     var v=s.scene.view();
     if(s.data.projection==='flat'){
       var curZoom=typeof v.zoom==='function' ? v.zoom() : 1;
-      v.setParameters({ zoom: Math.max(curZoom/1.2, 1) });
+      v.setParameters({ zoom: Math.max(curZoom/1.2, 0) });
     } else {
       v.setFov(Math.min(v.fov()*1.25, Math.PI*0.9));
     }
@@ -1234,6 +1483,27 @@ function generateAppJS(scenes, settings) {
     ctx.restore();
   }
 
+  function getEffectivePlanDotType(sd){
+    if(!sd || !sd.planDot) return APP.settings.dotType||'circle';
+    var pd=sd.planDot;
+    var rawType=String(pd.dotType||pd.type||pd.shape||pd.markerType||pd.symbol||'').toLowerCase();
+    if(rawType==='arrow'||rawType==='direction'||rawType==='directional') return 'arrow';
+    if(rawType==='circle'||rawType==='dot') return 'circle';
+    if(pd.rotation && (APP.settings.dotType||'circle')!=='arrow') return 'arrow';
+    return APP.settings.dotType || 'circle';
+  }
+
+  function isPlanDotVisible(sd){
+    var type=getEffectivePlanDotType(sd);
+    if(type==='arrow') return !!planVisibility.arrows;
+    return !!planVisibility.dots;
+  }
+
+  function updatePlanFilterButtons(){
+    if(planFilterDotsBtn) planFilterDotsBtn.classList.toggle('active', !!planVisibility.dots);
+    if(planFilterArrowsBtn) planFilterArrowsBtn.classList.toggle('active', !!planVisibility.arrows);
+  }
+
   function drawPlanDots(activeId){
     var canvas=document.getElementById('plan-dots');
     if(!canvas)return;
@@ -1246,11 +1516,12 @@ function generateAppJS(scenes, settings) {
     var r=(APP.settings.dotSize||4)*scale;
     var activeCol=APP.settings.dotActiveColor||'#00cc44';
     var inactiveCol=APP.settings.dotInactiveColor||'#ffffff';
-    var dotType=APP.settings.dotType||'circle';
     APP.scenes.forEach(function(sd){
       if(!sd.planDot)return;
+      if(!isPlanDotVisible(sd)) return;
       var x=sd.planDot.x*canvas.width, y=sd.planDot.y*canvas.height;
       var isActive=sd.id===activeId;
+      var dotType=getEffectivePlanDotType(sd);
       drawPlanSymbol(ctx,x,y,r,isActive?activeCol:inactiveCol,dotType,sd.planDot.rotation||0,isActive,APP.settings.dotRingColor||'#000000');
     });
   }
@@ -1299,6 +1570,7 @@ function generateAppJS(scenes, settings) {
       var tol=Math.max(0.06,(scaledR*3)/rect.width);
       APP.scenes.forEach(function(sd){
         if(!sd.planDot)return;
+        if(!isPlanDotVisible(sd)) return;
         var dx=sd.planDot.x-cx, dy=sd.planDot.y-cy;
         var dist=Math.sqrt(dx*dx+dy*dy);
         if(dist<tol&&dist<bestDist){bestDist=dist;best=sd;}
@@ -1312,17 +1584,29 @@ function generateAppJS(scenes, settings) {
   if(planRestore){ planRestore.addEventListener('click',function(e){ e.stopPropagation(); setPlanMinimised(false); }); }
   var planMaxBtn=document.getElementById('plan-maximize-btn');
   if(planMaxBtn){ planMaxBtn.addEventListener('click',function(e){ e.stopPropagation(); setPlanMaximised(!planContainer.classList.contains('plan-maximised')); }); }
+  if(planFilterDotsBtn){
+    planFilterDotsBtn.addEventListener('click',function(e){
+      e.stopPropagation();
+      planVisibility.dots=!planVisibility.dots;
+      updatePlanFilterButtons();
+      drawPlanDots(currentId);
+    });
+  }
+  if(planFilterArrowsBtn){
+    planFilterArrowsBtn.addEventListener('click',function(e){
+      e.stopPropagation();
+      planVisibility.arrows=!planVisibility.arrows;
+      updatePlanFilterButtons();
+      drawPlanDots(currentId);
+    });
+  }
 
   function switchScene(id){
     var s=scenes[id]; if(!s)return;
     currentId=id;
     if(s.data.projection==='flat'){
       var fv=s.scene.view();
-      fv.setParameters({
-        x: (s.data.initialView && s.data.initialView.x!=null) ? s.data.initialView.x : 0.5,
-        y: (s.data.initialView && s.data.initialView.y!=null) ? s.data.initialView.y : 0.5,
-        zoom: (s.data.initialView && s.data.initialView.zoom!=null) ? s.data.initialView.zoom : 1
-      });
+      fv.setParameters(flatViewParams(s.data));
     } else {
       var rv=s.scene.view();
       rv.setYaw(s.data.initialView.yaw||0);
@@ -1342,6 +1626,7 @@ function generateAppJS(scenes, settings) {
   window.addEventListener('resize',function(){drawPlanDots(currentId); updateControlDock();});
   var planCon=document.getElementById('plan-container');
   if(planCon&&window.ResizeObserver){new ResizeObserver(function(){drawPlanDots(currentId); updateControlDock();}).observe(planCon);}
+  updatePlanFilterButtons();
   updateControlDock();
 
   if(APP.scenes.length>0)switchScene(APP.scenes[0].id);
@@ -1385,6 +1670,9 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 #plan-restore-btn:hover{background:rgba(255,255,255,0.16);}
 .plan-controls-bar{position:absolute;top:8px;right:8px;left:8px;display:flex;align-items:center;justify-content:flex-end;gap:6px;z-index:2;}
 .plan-controls-title{margin-right:auto;background:rgba(0,0,0,0.55);color:#fff;padding:4px 8px;border-radius:999px;font-size:11px;}
+.plan-filter-btn{height:28px;border-radius:999px;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.48);color:#d5dbe6;cursor:pointer;font-size:11px;line-height:1;padding:0 10px;pointer-events:all;}
+.plan-filter-btn:hover{background:rgba(255,255,255,0.16);color:#fff;}
+.plan-filter-btn.active{background:rgba(233,69,96,0.82);border-color:rgba(233,69,96,0.95);color:#fff;}
 .plan-ctrl-btn{width:28px;height:28px;border-radius:999px;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.58);color:#fff;cursor:pointer;font-size:15px;line-height:1;pointer-events:all;}
 .plan-ctrl-btn:hover{background:rgba(255,255,255,0.16);}
 @media(max-width:768px){

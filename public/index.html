@@ -10,10 +10,15 @@
 
 <header class="topbar">
   <div class="topbar-left"><span class="logo">◈ PanoPath</span></div>
+  <div class="history-controls">
+    <button class="btn btn-sm" id="undo-btn" title="Undo">Undo</button>
+    <button class="btn btn-sm" id="redo-btn" title="Redo">Redo</button>
+  </div>
   <div class="topbar-center">
     <input type="text" id="project-title" value="My Panorama Tour" placeholder="Project title">
   </div>
   <div class="topbar-right">
+    <span class="project-status" id="project-status">Saved</span>
     <div class="dropdown" id="project-dropdown-wrap">
       <button class="btn" id="project-menu-btn">Project ▾</button>
       <div class="dropdown-menu" id="project-menu" hidden>
@@ -179,6 +184,15 @@
       <div class="settings-tab-content" id="tab-backup">
         <p class="panel-note" style="margin-top:0">Export a backup of your data to restore on another machine or after a fresh install.</p>
 
+        <h3 class="panel-section">Storage</h3>
+        <div id="storage-stats" class="storage-stats">
+          <div class="saved-empty">Loading storage statsâ€¦</div>
+        </div>
+        <div class="storage-actions">
+          <button class="btn btn-sm" id="storage-refresh-btn">Refresh</button>
+          <button class="btn btn-sm" id="storage-cleanup-btn">Clean Orphan Tiles</button>
+        </div>
+
         <h3 class="panel-section">Export Backup</h3>
         <p class="panel-note">Select what to include in the backup:</p>
         <label class="panel-label"><input type="checkbox" id="backup-include-projects" checked> Saved projects <span style="color:#666;font-size:11px">(includes scene tiles)</span></label>
@@ -247,6 +261,9 @@
       <span>Panoramas</span>
       <button class="add-btn" id="add-image-btn">+ Add</button>
       <input type="file" id="file-input" accept="image/jpeg,image/png,image/tiff,image/webp,image/heic,image/*" multiple hidden>
+    </div>
+    <div class="sidebar-tools">
+      <input type="search" id="scene-search-input" class="scene-search-input" placeholder="Search scenes, tags, notes">
     </div>
     <div class="scene-list" id="scene-list">
       <div class="drop-hint" id="drop-hint">

@@ -1,6 +1,8 @@
 services:
   panopath:
-    image: illerin/panopath:latest
+    build:
+      context: .
+    image: panopath:local
     container_name: panopath
     ports:
       - "3098:3098"

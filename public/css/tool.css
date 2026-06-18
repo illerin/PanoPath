@@ -5,12 +5,16 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* ── Topbar ─────────────────────────────────────────────────────── */
 .topbar{height:52px;display:flex;align-items:center;padding:0 16px;gap:12px;background:#16213e;border-bottom:1px solid #0f3460;position:relative;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.4);}
-.topbar-left{flex:0 0 auto;}
+.topbar-left{flex:0 0 auto;display:flex;align-items:center;gap:10px;}
 .topbar-center{flex:1;display:flex;justify-content:center;}
-.topbar-right{flex:0 0 auto;display:flex;gap:8px;}
+.topbar-right{flex:0 0 auto;display:flex;gap:8px;align-items:center;}
 .logo{font-size:17px;font-weight:800;color:#e94560;letter-spacing:-0.5px;}
 #project-title{background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);color:#fff;padding:6px 14px;border-radius:6px;font-size:14px;width:280px;text-align:center;outline:none;transition:border-color 0.2s;}
 #project-title:focus{border-color:#e94560;}
+.history-controls{display:flex;gap:6px;align-items:center;}
+.project-status{font-size:12px;color:#8aa0bf;min-width:74px;text-align:right;}
+.project-status.dirty{color:#f0c040;}
+.project-status.autosaved{color:#7fd18b;}
 
 /* ── Buttons ─────────────────────────────────────────────────────── */
 .btn{padding:7px 14px;border:1px solid rgba(255,255,255,0.15);border-radius:6px;background:rgba(255,255,255,0.08);color:#e0e0e0;cursor:pointer;font-size:13px;transition:all 0.15s;white-space:nowrap;}
@@ -62,6 +66,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* ── Sidebar ─────────────────────────────────────────────────────── */
 .sidebar{background:#16213e;border-right:1px solid #0f3460;display:flex;flex-direction:column;overflow:hidden;}
 .sidebar-header{padding:12px 14px;border-bottom:1px solid #0f3460;display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:13px;color:#aaa;}
+.sidebar-tools{padding:8px;border-bottom:1px solid #0f3460;}
+.scene-search-input{width:100%;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);color:#fff;padding:7px 10px;border-radius:6px;font-size:12px;outline:none;}
+.scene-search-input:focus{border-color:#e94560;}
 .add-btn{background:#e94560;color:#fff;padding:4px 12px;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;transition:background 0.15s;}
 .add-btn:hover{background:#c73652;}
 .scene-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px;}
@@ -69,11 +76,14 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .drop-icon{font-size:28px;}
 .drop-sub{font-size:11px;color:#444;line-height:1.5;}
 .scene-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;cursor:pointer;border:2px solid transparent;background:rgba(255,255,255,0.04);transition:all 0.15s;}
+.scene-item[hidden]{display:none!important;}
 .scene-item:hover{background:rgba(255,255,255,0.08);}
 .scene-item.active{border-color:#e94560;background:rgba(233,69,96,0.1);}
 .scene-thumb{width:48px;height:24px;border-radius:3px;object-fit:cover;background:#222;flex-shrink:0;}
 .scene-name-wrap{flex:1;display:flex;align-items:center;gap:4px;overflow:hidden;min-width:0;}
 .scene-name{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+.scene-meta{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;}
+.scene-chip{font-size:10px;color:#8aa0bf;background:rgba(138,160,191,0.12);border:1px solid rgba(138,160,191,0.2);padding:1px 6px;border-radius:999px;}
 .scene-first-badge{font-size:11px;color:#f0c040;flex-shrink:0;}
 .scene-del{opacity:0;background:none;border:none;color:#e94560;cursor:pointer;font-size:15px;padding:2px 4px;border-radius:3px;flex-shrink:0;}
 .scene-item:hover .scene-del{opacity:1;}
@@ -133,6 +143,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .hotspot-list{display:flex;flex-direction:column;gap:5px;}
 .hotspot-item{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.05);border-radius:6px;padding:6px 8px;font-size:12px;}
 .hotspot-item-info{background:rgba(33,150,243,0.1);border:1px solid rgba(33,150,243,0.2);}
+.hotspot-item-actions{display:flex;align-items:center;gap:2px;flex-shrink:0;}
+.hs-action{background:none;border:none;color:#8aa0bf;cursor:pointer;font-size:12px;padding:0 3px;}
+.hs-action:hover{color:#fff;}
 .hs-icon-sm{width:16px;height:16px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;font-weight:700;line-height:1;}
 .hs-icon-sm svg{width:14px;height:14px;display:block;}
 .hs-text{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#bbb;}
@@ -242,6 +255,11 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .saved-project-meta{font-size:11px;color:#666;margin-top:2px;}
 .saved-project-del{background:none;border:none;color:#666;cursor:pointer;font-size:14px;padding:2px 4px;border-radius:3px;flex-shrink:0;opacity:0;}
 .saved-project-item:hover .saved-project-del{opacity:1;color:#e94560;}
+.storage-stats{display:flex;flex-direction:column;gap:6px;width:100%;margin-top:8px;}
+.storage-stat{display:flex;justify-content:space-between;gap:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:8px 10px;font-size:12px;}
+.storage-stat-label{color:#aaa;}
+.storage-stat-value{color:#e0e0e0;font-weight:600;}
+.storage-actions{display:flex;gap:8px;margin-top:8px;}
 
 /* ── Plan view controls bar ──────────────────────────────────── */
 .plan-controls-bar{position:absolute;top:0;left:0;right:0;height:24px;background:rgba(0,0,0,0.6);display:flex;align-items:center;padding:0 6px;gap:4px;border-radius:8px 8px 0 0;z-index:2;pointer-events:all;}
