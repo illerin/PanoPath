@@ -10,7 +10,7 @@
     pendingLinkTarget: null, pendingLinkIcon: 'camera',
     placingPlanDot: false,
     marzViewer: null, marzScenes: {},
-    logoData: null, planData: null, planSize: 200,
+    logoData: null, planData: null, planSize: 200, planAspectRatio: 4/3,
     dotType: 'circle', dotRotationDefault: 0,
     dotSize: 3, dotActiveColor: '#00cc44', dotInactiveColor: '#ffffff', dotRingColor: '#000000',
     hotspotColors: {
@@ -38,6 +38,7 @@
     lastSnapshotString: '',
     isDirty: false,
     sceneFilter: '',
+    sceneFolders: [],
   };
 
   var $  = function(s){ return document.querySelector(s); };
@@ -54,7 +55,37 @@
   function ensureSceneMeta(sc){
     sc.tags = Array.isArray(sc.tags) ? sc.tags : [];
     sc.notes = sc.notes || '';
+    sc.folderId = sc.folderId || null;
     return sc;
+  }
+  function ensureFolderMeta(folder){
+    folder.name = folder.name || 'Folder';
+    folder.collapsed = !!folder.collapsed;
+    return folder;
+  }
+  function serializableSceneFolders(scenes){
+    ensureFolderRecordsForScenes();
+    var folderMap = {};
+    (state.sceneFolders || []).forEach(function(folder){
+      if(folder && folder.id) folderMap[folder.id] = ensureFolderMeta(deepClone(folder));
+    });
+    (scenes || state.scenes || []).forEach(function(scene){
+      if(scene.folderId && !folderMap[scene.folderId]){
+        folderMap[scene.folderId] = ensureFolderMeta({ id: scene.folderId, name: 'Folder', collapsed: false });
+      }
+    });
+    return Object.keys(folderMap).map(function(id){ return folderMap[id]; });
+  }
+  function restoreSceneFoldersFromProject(project){
+    var folders = (project.sceneFolders || (project.settings && project.settings.sceneFolders) || []).map(ensureFolderMeta);
+    var folderMap = {};
+    folders.forEach(function(folder){ if(folder.id) folderMap[folder.id] = folder; });
+    (project.scenes || []).forEach(function(scene){
+      if(scene.folderId && !folderMap[scene.folderId]){
+        folderMap[scene.folderId] = ensureFolderMeta({ id: scene.folderId, name: 'Folder', collapsed: false });
+      }
+    });
+    return Object.keys(folderMap).map(function(id){ return folderMap[id]; });
   }
   function getEffectivePlanDotType(sd){
     if(!sd || !sd.planDot) return state.dotType || 'circle';
@@ -72,6 +103,22 @@
       y: (viewToUse && viewToUse.y!=null) ? viewToUse.y : 0.5,
       zoom: (viewToUse && viewToUse.zoom!=null) ? viewToUse.zoom : 0
     };
+  }
+
+  function getPlanAspectRatio(){
+    var ratio=parseFloat(state.planAspectRatio);
+    if(isFinite(ratio) && ratio > 0) return ratio;
+    var img=$('#plan-preview') || $('#preview-plan-img');
+    if(img && img.naturalWidth && img.naturalHeight) return img.naturalWidth / img.naturalHeight;
+    return 4/3;
+  }
+
+  function updatePlanAspectFromImage(img){
+    if(img && img.naturalWidth && img.naturalHeight){
+      state.planAspectRatio = img.naturalWidth / img.naturalHeight;
+      applyPlanSize();
+      updatePreviewPlanDots();
+    }
   }
 
   function buildSceneFromProcessResult(file, result) {
@@ -131,6 +178,7 @@
       version: 1,
       currentSavedName: state.currentSavedName || null,
       settings: collectSettings(),
+      sceneFolders: serializableSceneFolders(),
       scenes: state.scenes
     });
   }
@@ -799,12 +847,28 @@
   $('#plan-upload-btn').addEventListener('click', function(){ $('#plan-file-input').click(); });
   $('#plan-file-input').addEventListener('change', function(e){
     var f=e.target.files[0]; if(!f) return;
-    readAsDataURL(f, function(data){ state.planData=data; $('#plan-preview').src=data; $('#plan-preview-wrap').hidden=false; $('#plan-controls').style.display=''; updatePreviewOverlay(); var curSd=getActiveScene(); if(curSd) renderProps(curSd); });
+    readAsDataURL(f, function(data){
+      state.planData=data;
+      var preview=$('#plan-preview');
+      preview.onload=function(){ updatePlanAspectFromImage(preview); preview.onload=null; };
+      preview.src=data;
+      $('#plan-preview-wrap').hidden=false;
+      $('#plan-controls').style.display='';
+      updatePreviewOverlay();
+      var curSd=getActiveScene(); if(curSd) renderProps(curSd);
+    });
     e.target.value='';
   });
-  $('#plan-remove-btn').addEventListener('click', function(){ state.planData=null; $('#plan-preview').src=''; $('#plan-preview-wrap').hidden=true; $('#plan-controls').style.display='none'; updatePreviewOverlay(); var curSd=getActiveScene(); if(curSd) renderProps(curSd); });
+  $('#plan-remove-btn').addEventListener('click', function(){ state.planData=null; state.planAspectRatio=4/3; $('#plan-preview').src=''; $('#plan-preview-wrap').hidden=true; $('#plan-controls').style.display='none'; updatePreviewOverlay(); var curSd=getActiveScene(); if(curSd) renderProps(curSd); });
   $('#plan-size-slider').addEventListener('input', function(){ state.planSize=parseInt(this.value,10); applyPlanSize(); updatePreviewPlanDots(); });
-  function applyPlanSize(){ var w=state.planSize||200, h=Math.round(w*0.75), wrap=$('#preview-plan-wrap'); if(wrap){ wrap.style.width=w+'px'; wrap.style.height=h+'px'; } }
+  function applyPlanSize(){
+    var w=state.planSize||200, ratio=getPlanAspectRatio(), h=Math.max(1, Math.round(w/ratio)) + 28, wrap=$('#preview-plan-wrap');
+    if(wrap){
+      wrap.style.setProperty('--plan-aspect', String(ratio));
+      wrap.style.width=w+'px';
+      wrap.style.height=h+'px';
+    }
+  }
 
   // ── Plan maximize / minimize in editor (#6) ────────────────────────────────
   (function(){
@@ -892,11 +956,11 @@
     $('#project-menu').hidden=true;
     if(state.isDirty && !confirm('Start a new project? Unsaved changes will be lost.')) return;
     state.scenes.forEach(function(s){ var ms=state.marzScenes[s.id]; if(ms){ try{ state.marzViewer.destroyScene(ms); }catch(e){} } });
-    state.scenes=[]; state.marzScenes={}; state.activeSceneId=null; state.firstSceneId=null;
+    state.scenes=[]; state.sceneFolders=[]; state.marzScenes={}; state.activeSceneId=null; state.firstSceneId=null;
     state.logoData=null; state.planData=null; state.currentSavedName=null;
     state.sceneFilter=''; $('#scene-search-input').value='';
     resetSettingsToDefault();
-    $$('.scene-item').forEach(function(el){ el.remove(); }); $('#drop-hint').style.display='';
+    renderSceneSidebar();
     $('#viewer-empty').hidden=false;
     $('#props-inner').innerHTML='<div class="props-empty">Select a scene to edit</div>';
     $('#project-title').value='My Panorama Tour';
@@ -1042,7 +1106,249 @@
   // ── Sidebar ────────────────────────────────────────────────────────────────
   var _dragSrcId = null;
 
+  function cleanupEmptyFolders(){
+    var used = {};
+    state.scenes.forEach(function(s){ if(s.folderId) used[s.folderId] = true; });
+    state.sceneFolders = (state.sceneFolders || []).filter(function(f){ return used[f.id]; });
+  }
+
+  function ensureFolderRecordsForScenes(){
+    var folderMap = {};
+    state.sceneFolders = (state.sceneFolders || []).map(ensureFolderMeta);
+    state.sceneFolders.forEach(function(folder){ if(folder.id) folderMap[folder.id] = folder; });
+    state.scenes.forEach(function(scene){
+      if(scene.folderId && !folderMap[scene.folderId]){
+        var folder = ensureFolderMeta({ id: scene.folderId, name: 'Folder', collapsed: false });
+        state.sceneFolders.push(folder);
+        folderMap[folder.id] = folder;
+      }
+    });
+  }
+
+  function clearSceneDragState(){
+    $$('.scene-item,.scene-folder,.scene-drop-zone').forEach(function(node){
+      node.classList.remove('dragging','drag-over','folder-drop-over','drop-before','drop-after','active');
+    });
+    var list=$('#scene-list'); if(list) list.classList.remove('drag-active');
+  }
+
+  function moveSceneBefore(sceneId, beforeId, folderId){
+    var fromIdx = state.scenes.findIndex(function(s){ return s.id === sceneId; });
+    if(fromIdx === -1) return;
+    var moved = state.scenes.splice(fromIdx, 1)[0];
+    moved.folderId = folderId || null;
+    var toIdx = beforeId ? state.scenes.findIndex(function(s){ return s.id === beforeId; }) : state.scenes.length;
+    if(toIdx === -1) toIdx = state.scenes.length;
+    state.scenes.splice(toIdx, 0, moved);
+    cleanupEmptyFolders();
+    renderSceneSidebar();
+  }
+
+  function nextSceneIdInFolderAfter(scene, folderId){
+    var idx = state.scenes.findIndex(function(s){ return s.id === scene.id; });
+    for(var i=idx+1; i<state.scenes.length; i++){
+      if((state.scenes[i].folderId || null) === (folderId || null)) return state.scenes[i].id;
+    }
+    return null;
+  }
+
+  function addSceneToFolder(sceneId, folderId, afterSceneId){
+    var fromIdx = state.scenes.findIndex(function(s){ return s.id === sceneId; });
+    if(fromIdx === -1 || !folderId) return;
+    var moved = state.scenes.splice(fromIdx, 1)[0];
+    moved.folderId = folderId;
+    var afterIdx = afterSceneId ? state.scenes.findIndex(function(s){ return s.id === afterSceneId; }) : -1;
+    if(afterIdx === -1){
+      afterIdx = -1;
+      state.scenes.forEach(function(s, i){ if(s.folderId === folderId) afterIdx = i; });
+    }
+    state.scenes.splice(afterIdx + 1, 0, moved);
+    cleanupEmptyFolders();
+    renderSceneSidebar();
+  }
+
+  function createFolderFromDrop(sourceId, targetId){
+    if(!sourceId || !targetId || sourceId === targetId) return;
+    var source = getSceneById(sourceId), target = getSceneById(targetId);
+    if(!source || !target) return;
+    if(target.folderId){
+      addSceneToFolder(sourceId, target.folderId, targetId);
+      return;
+    }
+    var folder = ensureFolderMeta({ id: genId(), name: 'Folder', collapsed: false });
+    state.sceneFolders.push(folder);
+    target.folderId = folder.id;
+    addSceneToFolder(sourceId, folder.id, targetId);
+  }
+
+  function makeSceneDropZone(beforeId, folderId){
+    var zone = el('div','scene-drop-zone');
+    zone.addEventListener('dragover', function(e){
+      if(!_dragSrcId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      zone.classList.add('active');
+    });
+    zone.addEventListener('dragleave', function(){ zone.classList.remove('active'); });
+    zone.addEventListener('drop', function(e){
+      e.preventDefault();
+      zone.classList.remove('active');
+      if(!_dragSrcId) return;
+      moveSceneBefore(_dragSrcId, beforeId || null, folderId || null);
+    });
+    return zone;
+  }
+
+  function renderSceneRow(scene, inFolder){
+    var item=el('div','scene-item'); item.dataset.id=scene.id;
+    if(inFolder) item.classList.add('scene-item-child');
+    if(scene.id === state.activeSceneId) item.classList.add('active');
+    var handle=el('div','scene-drag-handle','::'); handle.title='Drag to reorder';
+    var thumb=document.createElement('img'); thumb.className='scene-thumb'; thumb.src=scene.previewUrl; thumb.alt='';
+    var nameWrap=el('div','scene-name-wrap');
+    var nameBlock=el('div','scene-name-block');
+    nameBlock.style.flex='1';
+    nameBlock.style.minWidth='0';
+    var nameSpan=el('span','scene-name',scene.name); nameSpan.title='Double-click to rename';
+    attachRename(nameSpan,scene); nameBlock.appendChild(nameSpan);
+    var meta=el('div','scene-meta'); meta.dataset.role='scene-meta'; nameBlock.appendChild(meta);
+    nameWrap.appendChild(nameBlock);
+    var del=el('button','scene-del','x'); del.title='Remove';
+    del.addEventListener('click',function(e){ e.stopPropagation(); removeScene(scene.id); });
+    item.appendChild(handle); item.appendChild(thumb); item.appendChild(nameWrap); item.appendChild(del);
+    item.addEventListener('click',function(){ activateScene(scene.id); });
+    item.draggable = true;
+    item.addEventListener('dragstart', function(e){
+      _dragSrcId = scene.id;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', scene.id);
+      var list=$('#scene-list'); if(list) list.classList.add('drag-active');
+      setTimeout(function(){ item.classList.add('dragging'); }, 0);
+    });
+    item.addEventListener('dragend', function(){
+      clearSceneDragState();
+      _dragSrcId = null;
+    });
+    item.addEventListener('dragover', function(e){
+      if(!_dragSrcId || _dragSrcId === scene.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      var rect=item.getBoundingClientRect();
+      var y=e.clientY-rect.top;
+      item.classList.remove('drop-before','drop-after','folder-drop-over');
+      if(y < rect.height * 0.28) item.classList.add('drop-before');
+      else if(y > rect.height * 0.72) item.classList.add('drop-after');
+      else item.classList.add('folder-drop-over');
+    });
+    item.addEventListener('dragleave', function(){ item.classList.remove('folder-drop-over','drop-before','drop-after'); });
+    item.addEventListener('drop', function(e){
+      e.preventDefault();
+      var before = item.classList.contains('drop-before');
+      var after = item.classList.contains('drop-after');
+      item.classList.remove('folder-drop-over','drop-before','drop-after');
+      if(!_dragSrcId || _dragSrcId === scene.id) return;
+      if(before){
+        moveSceneBefore(_dragSrcId, scene.id, scene.folderId || null);
+        return;
+      }
+      if(after){
+        moveSceneBefore(_dragSrcId, nextSceneIdInFolderAfter(scene, scene.folderId || null), scene.folderId || null);
+        return;
+      }
+      createFolderFromDrop(_dragSrcId, scene.id);
+    });
+    return item;
+  }
+
+  function renderFolderGroup(folder, scenes){
+    var frag=document.createDocumentFragment();
+    var header=el('div','scene-folder'); header.dataset.folderId=folder.id;
+    header.appendChild(el('span','scene-folder-arrow',folder.collapsed ? '>' : 'v'));
+    var folderName=el('span','scene-folder-name',folder.name);
+    folderName.title='Double-click to rename folder';
+    folderName.addEventListener('dblclick',function(e){
+      e.stopPropagation();
+      var input=document.createElement('input');
+      input.className='scene-folder-name-input';
+      input.value=folder.name;
+      folderName.replaceWith(input);
+      input.focus();
+      input.select();
+      function commit(){
+        folder.name = input.value.trim() || folder.name || 'Folder';
+        renderSceneSidebar();
+      }
+      input.addEventListener('blur',commit);
+      input.addEventListener('keydown',function(k){
+        if(k.key==='Enter') input.blur();
+        if(k.key==='Escape') renderSceneSidebar();
+      });
+    });
+    header.appendChild(folderName);
+    header.appendChild(el('span','scene-folder-count',String(scenes.length)));
+    var folderClickTimer = null;
+    header.addEventListener('click',function(){
+      if(folderClickTimer) clearTimeout(folderClickTimer);
+      folderClickTimer = setTimeout(function(){
+        folder.collapsed = !folder.collapsed;
+        renderSceneSidebar();
+      }, 180);
+    });
+    folderName.addEventListener('dblclick',function(){ if(folderClickTimer) clearTimeout(folderClickTimer); });
+    header.addEventListener('dragover',function(e){
+      if(!_dragSrcId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect='move';
+      header.classList.add('drag-over');
+    });
+    header.addEventListener('dragleave',function(){ header.classList.remove('drag-over'); });
+    header.addEventListener('drop',function(e){
+      e.preventDefault();
+      header.classList.remove('drag-over');
+      if(_dragSrcId) addSceneToFolder(_dragSrcId, folder.id, null);
+    });
+    frag.appendChild(header);
+    if(!folder.collapsed){
+      scenes.forEach(function(child){
+        frag.appendChild(makeSceneDropZone(child.id, folder.id));
+        frag.appendChild(renderSceneRow(child, true));
+      });
+      frag.appendChild(makeSceneDropZone(null, folder.id));
+    }
+    return frag;
+  }
+
+  function renderSceneSidebar(){
+    var list=$('#scene-list');
+    if(!list) return;
+    Array.from(list.children).forEach(function(child){
+      if(child.id !== 'drop-hint') child.remove();
+    });
+    $('#drop-hint').style.display = state.scenes.length ? 'none' : '';
+    ensureFolderRecordsForScenes();
+    var renderedFolders = {};
+    state.scenes.forEach(function(scene){
+      if(scene.folderId){
+        if(renderedFolders[scene.folderId]) return;
+        var folder = state.sceneFolders.find(function(f){ return f.id === scene.folderId; });
+        if(!folder) folder = ensureFolderMeta({ id: scene.folderId, name: 'Folder', collapsed: false });
+        var children = state.scenes.filter(function(s){ return s.folderId === folder.id; });
+        list.appendChild(makeSceneDropZone(scene.id, null));
+        list.appendChild(renderFolderGroup(folder, children));
+        renderedFolders[folder.id] = true;
+        return;
+      }
+      list.appendChild(makeSceneDropZone(scene.id, null));
+      list.appendChild(renderSceneRow(scene, false));
+    });
+    list.appendChild(makeSceneDropZone(null, null));
+    updateFirstSceneBadges();
+    updateSceneFilter();
+  }
+
   function addSceneToSidebar(scene){
+    renderSceneSidebar();
+    return;
     $('#drop-hint').style.display='none';
     var item=el('div','scene-item'); item.dataset.id=scene.id;
 
@@ -1140,6 +1446,16 @@
       ].join(' ').toLowerCase();
       item.hidden = haystack.indexOf(query) === -1;
     });
+    $$('.scene-folder').forEach(function(folder){
+      var id = folder.dataset.folderId;
+      var children = Array.from($$('.scene-item')).filter(function(item){
+        var scene = getSceneById(item.dataset.id);
+        return scene && scene.folderId === id;
+      });
+      var anyVisible = children.some(function(item){ return !item.hidden; });
+      folder.hidden = !!query && !anyVisible;
+    });
+    $$('.scene-drop-zone').forEach(function(zone){ zone.hidden = !!query; });
   }
 
   function attachRename(span,scene){
@@ -1185,15 +1501,14 @@
     state.scenes=state.scenes.filter(function(s){ return s.id!==id; });
     var ms=state.marzScenes[id]; if(ms){ try{ state.marzViewer.destroyScene(ms); }catch(e){} }
     delete state.marzScenes[id];
-    var item=$('#scene-list [data-id="'+id+'"]'); if(item) item.remove();
-    if(state.firstSceneId===id){ state.firstSceneId=state.scenes.length?state.scenes[0].id:null; updateFirstSceneBadges(); }
+    cleanupEmptyFolders();
+    if(state.firstSceneId===id){ state.firstSceneId=state.scenes.length?state.scenes[0].id:null; }
     if(state.activeSceneId===id){
       state.activeSceneId=null; $('#viewer-empty').hidden=false;
       $('#props-inner').innerHTML='<div class="props-empty">Select a scene to edit</div>';
       if(state.scenes.length) activateScene(state.scenes[0].id);
     }
-    if(!state.scenes.length) $('#drop-hint').style.display='';
-    updateSceneFilter();
+    renderSceneSidebar();
     updatePreviewOverlay();
   }
 
@@ -2036,13 +2351,21 @@
     setBtn('preview-btn2','setting-btn2-text',state.btn2TextColor,state.btn2BgColor);
     setBtn('preview-btn3','setting-btn3-text',state.btn3TextColor,state.btn3BgColor);
     var pw=$('#preview-plan-wrap'), pi=$('#preview-plan-img');
-    if(state.planData){ pi.src=state.planData; pw.hidden=false; applyPlanSize(); updatePreviewPlanDots(); } else { pw.hidden=true; }
+    if(state.planData){
+      pi.onload=function(){ updatePlanAspectFromImage(pi); pi.onload=null; };
+      pi.src=state.planData;
+      pw.hidden=false;
+      applyPlanSize();
+      updatePreviewPlanDots();
+    } else { pw.hidden=true; }
     updateEditorCompass();
   }
   function updatePreviewPlanDots(){
     var canvas=$('#preview-plan-canvas'); if(!canvas) return;
     var wrap=$('#preview-plan-wrap'); if(!wrap||wrap.hidden) return;
-    canvas.width=wrap.offsetWidth||200; canvas.height=wrap.offsetHeight||150;
+    var img=$('#preview-plan-img');
+    canvas.width=(img && img.clientWidth) || wrap.offsetWidth || 200;
+    canvas.height=(img && img.clientHeight) || Math.max(1, (wrap.offsetHeight||150) - 28);
     var ctx=canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height);
     var scale=canvas.width/(200);
     var r=(state.dotSize||4)*scale;
@@ -2081,9 +2404,10 @@
       btn3Text:$('#setting-btn3-text').value||'', btn3Url:$('#setting-btn3-url').value||'', btn3NewTab:$('#setting-btn3-newtab').checked,
       btn3TextColor:state.btn3TextColor, btn3BgColor:state.btn3BgColor,
       hotspotColors:JSON.parse(JSON.stringify(state.hotspotColors)),
+      sceneFolders:serializableSceneFolders(),
       planData:state.planData||null, firstSceneId:state.firstSceneId||'',
       dotType:state.dotType||'circle',
-      planSize:state.planSize||200, dotSize:state.dotSize||4,
+      planSize:state.planSize||200, planAspectRatio:getPlanAspectRatio(), dotSize:state.dotSize||4,
       dotActiveColor:state.dotActiveColor||'#00cc44', dotInactiveColor:state.dotInactiveColor||'#ffffff', dotRingColor:state.dotRingColor||'#000000',
     };
     var modal=$('#processing-modal'), fill=$('#progress-fill');
@@ -2192,9 +2516,10 @@
       btn3Text:$('#setting-btn3-text').value||'', btn3Url:$('#setting-btn3-url').value||'', btn3NewTab:$('#setting-btn3-newtab').checked,
       btn3TextColor:state.btn3TextColor, btn3BgColor:state.btn3BgColor,
       hotspotColors:JSON.parse(JSON.stringify(state.hotspotColors)),
+      sceneFolders:serializableSceneFolders(),
       planData:state.planData||null, firstSceneId:state.firstSceneId||'',
       dotType:state.dotType||'circle',
-      planSize:state.planSize||200, dotSize:state.dotSize||4,
+      planSize:state.planSize||200, planAspectRatio:getPlanAspectRatio(), dotSize:state.dotSize||4,
       dotActiveColor:state.dotActiveColor||'#00cc44', dotInactiveColor:state.dotInactiveColor||'#ffffff', dotRingColor:state.dotRingColor||'#000000',
     };
   }
@@ -2216,7 +2541,8 @@
       btn3TextColor:'#ffffff', btn3BgColor:'#e94560',
       dotType:'circle', dotRotationDefault:0,
       dotSize:3, dotActiveColor:'#00cc44', dotInactiveColor:'#ffffff', dotRingColor:'#000000',
-      planSize:200
+      planSize:200,
+      planAspectRatio:4/3
     };
     state.hotspotColors = JSON.parse(JSON.stringify(DEFAULTS.hotspotColors));
     syncHotspotColorInputs(); updateAllHotspotPreviews();
@@ -2225,7 +2551,7 @@
     });
     state.dotType=DEFAULTS.dotType; state.dotRotationDefault=DEFAULTS.dotRotationDefault;
     state.dotSize=DEFAULTS.dotSize; state.dotActiveColor=DEFAULTS.dotActiveColor;
-    state.dotInactiveColor=DEFAULTS.dotInactiveColor; state.dotRingColor=DEFAULTS.dotRingColor; state.planSize=DEFAULTS.planSize;
+    state.dotInactiveColor=DEFAULTS.dotInactiveColor; state.dotRingColor=DEFAULTS.dotRingColor; state.planSize=DEFAULTS.planSize; state.planAspectRatio=DEFAULTS.planAspectRatio;
     $('#setting-autorotate').checked=false;
     $('#setting-fullscreen').checked=true;
     $('#setting-zoom').checked=true;
@@ -2258,7 +2584,9 @@
   function performSave(name){
     if(!state.scenes.length){ alert('Add at least one scene before saving.'); return; }
     $('#project-title').value=name;  // set title before collectSettings so it's baked in
-    var project={version:1, settings:collectSettings(), scenes:state.scenes};
+    ensureFolderRecordsForScenes();
+    var folders = serializableSceneFolders();
+    var project={version:1, settings:collectSettings(), sceneFolders:folders, scenes:state.scenes};
     fetch('/api/projects/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,project:project})})
       .then(function(r){ return r.json(); })
       .then(function(result){
@@ -2306,8 +2634,8 @@
       .then(function(data){
         var missing=data.results.filter(function(r){ return !r.exists; });
         state.scenes.forEach(function(s){ var ms=state.marzScenes[s.id]; if(ms){ try{ state.marzViewer.destroyScene(ms); }catch(e){} } });
-        state.scenes=[]; state.marzScenes={}; state.activeSceneId=null; state.firstSceneId=null; state.logoData=null; state.planData=null;
-        $$('.scene-item').forEach(function(el){ el.remove(); }); $('#drop-hint').style.display='';
+        state.scenes=[]; state.sceneFolders=restoreSceneFoldersFromProject(project); state.marzScenes={}; state.activeSceneId=null; state.firstSceneId=null; state.logoData=null; state.planData=null; state.planAspectRatio=4/3;
+        renderSceneSidebar();
         $('#viewer-empty').hidden=false;
         $('#props-inner').innerHTML='<div class="props-empty">Select a scene to edit</div>';
         if(project.settings){
@@ -2345,8 +2673,16 @@
           }
           wireBtnColors(1); wireBtnColors(2); wireBtnColors(3);
           if(s.logoData){ state.logoData=s.logoData; $('#logo-preview').src=s.logoData; $('#logo-preview-wrap').hidden=false; }
-          if(s.planData){ state.planData=s.planData; $('#plan-preview').src=s.planData; $('#plan-preview-wrap').hidden=false; $('#plan-controls').style.display=''; }
-          else { state.planData=null; $('#plan-preview').src=''; $('#plan-preview-wrap').hidden=true; $('#plan-controls').style.display='none'; }
+          if(s.planAspectRatio){ state.planAspectRatio=parseFloat(s.planAspectRatio)||4/3; }
+          if(s.planData){
+            state.planData=s.planData;
+            var planPreview=$('#plan-preview');
+            planPreview.onload=function(){ updatePlanAspectFromImage(planPreview); planPreview.onload=null; };
+            planPreview.src=s.planData;
+            $('#plan-preview-wrap').hidden=false;
+            $('#plan-controls').style.display='';
+          }
+          else { state.planData=null; state.planAspectRatio=4/3; $('#plan-preview').src=''; $('#plan-preview-wrap').hidden=true; $('#plan-controls').style.display='none'; }
           state.dotType=s.dotType||'circle';
           $$('.dot-type-btn').forEach(function(btn){ btn.classList.toggle('active', btn.dataset.type===state.dotType); });
     
@@ -2362,9 +2698,9 @@
         valid.forEach(function(sc){
           var normalized = normalizeLoadedScene(sc);
           state.scenes.push(normalized);
-          addSceneToSidebar(normalized);
         });
         if(!state.firstSceneId&&state.scenes.length) state.firstSceneId=state.scenes[0].id;
+        renderSceneSidebar();
         updateFirstSceneBadges(); updatePreviewOverlay();
         refreshSceneRendering();
         if(state.scenes.length) activateScene(state.scenes[0].id);

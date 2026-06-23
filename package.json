@@ -1,6 +1,6 @@
 {
   "name": "panopath",
-  "version": "0.5.11",
+  "version": "0.5.20",
   "description": "Self-hosted PanoPath panorama tour builder",
   "main": "server/index.js",
   "scripts": {

@@ -553,9 +553,10 @@ app.post('/api/export', async (req, res) => {
   archive.append(generateReadme(settings, scenes, 'full'), { name: 'README.txt' });
   archive.append(JSON.stringify({
     version: 1,
-    exportedWith: 'PanoPath by illerin v0.5.11',
+    exportedWith: 'PanoPath by illerin v0.5.20',
     exportedAt: new Date().toISOString(),
     settings,
+    sceneFolders: settings.sceneFolders || [],
     scenes
   }, null, 2), { name: 'project.json' });
 
@@ -652,7 +653,7 @@ app.post('/api/backup/export', express.json({ limit: '10mb' }), async (req, res)
 
   const manifest = {
     createdAt: now.toISOString(),
-    exportedWith: 'PanoPath by illerin v0.5.11',
+    exportedWith: 'PanoPath by illerin v0.5.20',
     includesProjects: !!includeProjects,
     includesPresets: !!includePresets,
   };
@@ -1197,8 +1198,9 @@ function generateViewerHTML(scenes, settings) {
   const btn2Html   = settings.btn2Text ? `<a class="top-btn"${btnStyle(settings.btn2TextColor,settings.btn2BgColor)} href="${safeUrl(settings.btn2Url)}"${btnTarget(settings.btn2NewTab)}>${escHtml(settings.btn2Text)}</a>` : '';
   const btn3Html   = settings.btn3Text ? `<a class="top-btn"${btnStyle(settings.btn3TextColor,settings.btn3BgColor)} href="${safeUrl(settings.btn3Url)}"${btnTarget(settings.btn3NewTab)}>${escHtml(settings.btn3Text)}</a>` : '';
   const pw = settings.planSize || 200;
-  const ph = Math.round(pw * 0.75);
-  const planHtml  = planExt ? `<div id="plan-container" style="width:${pw}px;height:${ph}px">
+  const planAspect = Number.isFinite(Number(settings.planAspectRatio)) && Number(settings.planAspectRatio) > 0 ? Number(settings.planAspectRatio) : 4/3;
+  const ph = Math.max(1, Math.round(pw / planAspect)) + 32;
+  const planHtml  = planExt ? `<div id="plan-container" style="width:${pw}px;height:${ph}px;--plan-aspect:${planAspect}">
       <div class="plan-controls-bar">
         <span class="plan-controls-title">Plan</span>
         <button class="plan-filter-btn active" id="plan-filter-dots-btn" title="Toggle dots">Dots</button>
@@ -1509,7 +1511,9 @@ function generateAppJS(scenes, settings) {
     if(!canvas)return;
     var container=document.getElementById('plan-container');
     if(!container)return;
-    canvas.width=container.offsetWidth; canvas.height=container.offsetHeight;
+    var img=document.getElementById('plan-img');
+    canvas.width=(img&&img.clientWidth)||container.offsetWidth;
+    canvas.height=(img&&img.clientHeight)||Math.max(1,container.offsetHeight-32);
     var ctx=canvas.getContext('2d');
     ctx.clearRect(0,0,canvas.width,canvas.height);
     var scale=canvas.width/200;
@@ -1662,14 +1666,14 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 #compass-wrap.flat-mode .compass-north-label{display:none;}
 #compass-wrap.flat-mode #flat-north-arrow{display:block;}
 @media(max-width:768px){#compass-wrap{bottom:16px;left:12px;} #compass-wrap svg{width:48px;height:48px;}}
-#plan-container{position:absolute;bottom:20px;right:20px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6);background:#111;overflow:hidden;}
-#plan-container.plan-maximised{width:min(70vw,720px)!important;height:min(70vh,540px)!important;right:20px;bottom:20px;z-index:8;}
-#plan-img{width:100%;height:100%;object-fit:contain;display:block;border-radius:8px;}
-#plan-dots{position:absolute;inset:0;pointer-events:none;width:100%;height:100%;}
+#plan-container{position:absolute;bottom:20px;right:20px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6);background:#111;overflow:hidden;display:flex;flex-direction:column;}
+#plan-container.plan-maximised{width:min(70vw,720px)!important;height:auto!important;aspect-ratio:var(--plan-aspect,1.333333);max-height:70vh;right:20px;bottom:20px;z-index:8;}
+#plan-img{width:100%;height:calc(100% - 32px);object-fit:contain;display:block;border-radius:0 0 8px 8px;}
+#plan-dots{position:absolute;left:0;right:0;top:32px;bottom:0;pointer-events:none;width:100%;height:calc(100% - 32px);}
 #plan-restore-btn{position:absolute;bottom:20px;right:20px;pointer-events:all;background:rgba(0,0,0,0.7);color:#fff;border:1px solid rgba(255,255,255,0.2);padding:8px 12px;border-radius:999px;cursor:pointer;font-size:13px;backdrop-filter:blur(4px);}
 #plan-restore-btn:hover{background:rgba(255,255,255,0.16);}
-.plan-controls-bar{position:absolute;top:8px;right:8px;left:8px;display:flex;align-items:center;justify-content:flex-end;gap:6px;z-index:2;}
-.plan-controls-title{margin-right:auto;background:rgba(0,0,0,0.55);color:#fff;padding:4px 8px;border-radius:999px;font-size:11px;}
+.plan-controls-bar{position:relative;height:32px;display:flex;align-items:center;justify-content:flex-end;gap:6px;z-index:2;background:rgba(0,0,0,0.72);padding:0 8px;border-radius:8px 8px 0 0;}
+.plan-controls-title{margin-right:auto;color:#fff;font-size:11px;font-weight:700;}
 .plan-filter-btn{height:28px;border-radius:999px;border:1px solid rgba(255,255,255,0.18);background:rgba(0,0,0,0.48);color:#d5dbe6;cursor:pointer;font-size:11px;line-height:1;padding:0 10px;pointer-events:all;}
 .plan-filter-btn:hover{background:rgba(255,255,255,0.16);color:#fff;}
 .plan-filter-btn.active{background:rgba(233,69,96,0.82);border-color:rgba(233,69,96,0.95);color:#fff;}
@@ -1680,8 +1684,8 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
   #logo-img{height:30px;max-width:100px;}
   .top-btn{font-size:11px;padding:5px 10px;}
   #title-bar{font-size:12px;padding:5px 12px;max-width:55vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  #plan-container{bottom:16px!important;left:50%!important;right:auto!important;transform:translateX(-50%)!important;width:52vw!important;height:39vw!important;}
-  #plan-container.plan-maximised{left:50%!important;right:auto!important;bottom:16px!important;transform:translateX(-50%)!important;width:min(92vw,560px)!important;height:min(68vh,420px)!important;}
+  #plan-container{bottom:16px!important;left:50%!important;right:auto!important;transform:translateX(-50%)!important;width:52vw!important;height:auto!important;aspect-ratio:var(--plan-aspect,1.333333);}
+  #plan-container.plan-maximised{left:50%!important;right:auto!important;bottom:16px!important;transform:translateX(-50%)!important;width:min(92vw,560px)!important;height:auto!important;aspect-ratio:var(--plan-aspect,1.333333);max-height:68vh;}
   #plan-restore-btn{bottom:16px;right:12px;}
 }
 .hotspot-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;transform:translate(-50%,-50%);cursor:default;position:relative;}
@@ -1701,7 +1705,7 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 
 function generateReadme(settings, scenes, exportType){
   exportType = exportType || 'full';
-  const APP_VERSION = '0.5.15';
+  const APP_VERSION = '0.5.20';
   const isSlim = exportType === 'slim';
   const now = new Date();
   const dateStr = now.toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });

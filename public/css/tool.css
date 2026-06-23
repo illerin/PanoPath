@@ -75,7 +75,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .drop-hint{display:flex;flex-direction:column;align-items:center;gap:8px;padding:24px 16px;color:#555;text-align:center;font-size:13px;border:2px dashed #2a2a4a;border-radius:10px;margin:4px 0;}
 .drop-icon{font-size:28px;}
 .drop-sub{font-size:11px;color:#444;line-height:1.5;}
-.scene-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;cursor:pointer;border:2px solid transparent;background:rgba(255,255,255,0.04);transition:all 0.15s;}
+.scene-item{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;cursor:pointer;border:2px solid transparent;background:rgba(255,255,255,0.04);transition:all 0.15s;position:relative;}
 .scene-item[hidden]{display:none!important;}
 .scene-item:hover{background:rgba(255,255,255,0.08);}
 .scene-item.active{border-color:#e94560;background:rgba(233,69,96,0.1);}
@@ -91,6 +91,21 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .scene-drag-handle:active{cursor:grabbing;}
 .scene-item.dragging{opacity:0.4;}
 .scene-item.drag-over{border-color:#e94560;background:rgba(233,69,96,0.15);}
+.scene-item.folder-drop-over{border-color:#45b6ff;background:rgba(69,182,255,0.16);box-shadow:inset 0 0 0 1px rgba(69,182,255,0.45);}
+.scene-item.drop-before::before,.scene-item.drop-after::after{content:"";position:absolute;left:4px;right:4px;height:5px;border-radius:999px;background:#e94560;box-shadow:0 0 0 2px rgba(233,69,96,0.24);z-index:3;}
+.scene-item.drop-before::before{top:-7px;}
+.scene-item.drop-after::after{bottom:-7px;}
+.scene-item-child{margin-left:22px;background:rgba(255,255,255,0.035);}
+.scene-folder{display:flex;align-items:center;gap:7px;padding:7px 9px;border-radius:8px;background:rgba(255,255,255,0.075);border:1px solid rgba(255,255,255,0.08);cursor:pointer;color:#d8e2f2;font-size:12px;font-weight:700;}
+.scene-folder:hover{background:rgba(255,255,255,0.11);}
+.scene-folder.drag-over{border-color:#45b6ff;background:rgba(69,182,255,0.14);}
+.scene-folder-arrow{width:12px;color:#8aa0bf;font-size:11px;}
+.scene-folder-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.scene-folder-name-input{flex:1;min-width:0;background:rgba(255,255,255,0.1);border:1px solid #45b6ff;color:#fff;border-radius:5px;padding:2px 6px;font-size:12px;font-weight:700;outline:none;}
+.scene-folder-count{font-size:10px;color:#8aa0bf;background:rgba(138,160,191,0.13);padding:1px 6px;border-radius:999px;}
+.scene-drop-zone{height:6px;margin:-3px 2px;border-radius:999px;transition:height 0.12s,background 0.12s,margin 0.12s,box-shadow 0.12s;}
+.scene-list.drag-active .scene-drop-zone{height:6px;margin:-3px 2px;background:rgba(233,69,96,0.18);}
+.scene-drop-zone.active{height:8px;margin:-1px 2px;background:#e94560;box-shadow:0 0 0 2px rgba(233,69,96,0.22);}
 
 /* ── Viewer Area ─────────────────────────────────────────────────── */
 .viewer-area{position:relative;overflow:hidden;background:#0a0a1a;}
@@ -105,9 +120,9 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 #preview-logo{height:36px;max-width:120px;object-fit:contain;filter:drop-shadow(0 1px 4px rgba(0,0,0,0.6));border-radius:4px;}
 #preview-btn1,#preview-btn2{color:#fff;font-size:12px;font-weight:600;background:rgba(0,0,0,0.65);padding:6px 14px;border-radius:8px;white-space:nowrap;}
 #preview-btn3{color:#fff;font-size:12px;font-weight:600;background:rgba(233,69,96,0.85);padding:6px 14px;border-radius:8px;white-space:nowrap;}
-#preview-plan-wrap{position:absolute;bottom:14px;right:14px;width:200px;height:150px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6);background:#111;overflow:hidden;pointer-events:all;}
-#preview-plan-img{width:100%;height:100%;object-fit:contain;display:block;border-radius:8px;}
-#preview-plan-canvas{position:absolute;inset:0;pointer-events:none;width:100%;height:100%;}
+#preview-plan-wrap{position:absolute;bottom:14px;right:14px;width:200px;height:150px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,0.6);background:#111;overflow:hidden;pointer-events:all;display:flex;flex-direction:column;}
+#preview-plan-img{width:100%;height:calc(100% - 28px);object-fit:contain;display:block;border-radius:0 0 8px 8px;flex:1;min-height:0;}
+#preview-plan-canvas{position:absolute;left:0;right:0;top:28px;bottom:0;pointer-events:none;width:100%;height:calc(100% - 28px);}
 
 /* Placement overlays */
 .place-overlay,.plan-dot-overlay{position:absolute;inset:0;cursor:crosshair;z-index:20;display:flex;align-items:flex-start;justify-content:center;pointer-events:all;}
@@ -262,7 +277,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 .storage-actions{display:flex;gap:8px;margin-top:8px;}
 
 /* ── Plan view controls bar ──────────────────────────────────── */
-.plan-controls-bar{position:absolute;top:0;left:0;right:0;height:24px;background:rgba(0,0,0,0.6);display:flex;align-items:center;padding:0 6px;gap:4px;border-radius:8px 8px 0 0;z-index:2;pointer-events:all;}
+.plan-controls-bar{position:relative;height:28px;background:rgba(0,0,0,0.72);display:flex;align-items:center;padding:0 6px;gap:4px;border-radius:8px 8px 0 0;z-index:2;pointer-events:all;flex:0 0 28px;}
 .plan-controls-title{flex:1;font-size:11px;color:#aaa;font-weight:600;letter-spacing:0.3px;}
 .plan-ctrl-btn{background:none;border:none;color:#aaa;cursor:pointer;font-size:13px;padding:0 4px;line-height:1;transition:color 0.15s;}
 .plan-ctrl-btn:hover{color:#fff;}
@@ -280,7 +295,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 
 /* Plan maximised state */
 #preview-plan-wrap.plan-maximised{
-  width:50vw!important;height:37.5vw!important;
+  width:min(50vw,720px)!important;height:auto!important;aspect-ratio:var(--plan-aspect, 1.333333);
   bottom:14px!important;right:14px!important;
 }
 
@@ -377,9 +392,10 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 /* ── Plan maximize in editor (#6) ─────────────────────────────────────────── */
 #preview-plan-wrap.plan-editor-maximised {
   width: 45vw !important;
-  height: 45vh !important;
+  height: auto !important;
+  aspect-ratio: var(--plan-aspect, 1.333333);
   max-width: 600px;
-  max-height: 500px;
+  max-height: 80vh;
 }
 /* ── Export choice modal ───────────────────────────────────────────────────── */
 .export-choice-btn{width:100%;background:#1a2a4a;border:1px solid #2a3a5a;border-radius:10px;padding:14px 16px;text-align:left;cursor:pointer;transition:border-color 0.15s,background 0.15s;color:#fff;}
