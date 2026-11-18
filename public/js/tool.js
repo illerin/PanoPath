@@ -2128,6 +2128,9 @@
     } else {
       marker.innerHTML=LINK_ICONS[icon]||LINK_ICONS.camera;
       applyHotspotTheme(marker, icon);
+      var targetScene=state.scenes.find(function(scene){ return scene.id===hs.targetId; });
+      var tooltip=el('div','hs-link-tooltip',targetScene ? targetScene.name : (hs.targetName||''));
+      wrap.appendChild(tooltip);
       marker.addEventListener('click',function(e){ e.stopPropagation(); activateScene(hs.targetId); }); wrap.appendChild(marker);
     }
     var pos = isFlatScene(sd)

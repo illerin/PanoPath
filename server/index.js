@@ -1392,6 +1392,10 @@ function generateAppJS(scenes, settings) {
         icon.className='hs-icon hs-link hs-link-'+( hs.icon||'camera');
         icon.innerHTML=getLinkIcon(hs.icon||'camera');
         applyHotspotTheme(icon, hs.icon||'camera');
+        var targetScene=APP.scenes.find(function(scene){ return scene.id===hs.targetId; });
+        var tooltip=document.createElement('div'); tooltip.className='hs-link-tooltip';
+        tooltip.textContent=targetScene ? targetScene.name : (hs.targetName||'');
+        wrap.appendChild(tooltip);
         wrap.style.cursor='pointer';
         wrap.appendChild(icon);
         (function(tid){wrap.addEventListener('click',function(e){e.stopPropagation();switchScene(tid);});})(hs.targetId);
@@ -1691,6 +1695,8 @@ body{background:#000;overflow:hidden;font-family:sans-serif;}
 .hotspot-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;transform:translate(-50%,-50%);cursor:default;position:relative;}
 .hs-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 2px 10px rgba(0,0,0,0.6);transition:transform 0.15s;padding:8px;}
 .hotspot-wrap:hover .hs-icon{transform:scale(1.15);}
+.hs-link-tooltip{display:none;position:absolute;top:calc(100% + 4px);left:50%;transform:translateX(-50%);z-index:2;background:rgba(0,0,0,0.72);color:#fff;padding:4px 8px;border-radius:5px;font-size:11px;line-height:1.3;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;pointer-events:none;}
+.hotspot-wrap:hover .hs-link-tooltip{display:block;}
 .hs-info{background:#2196F3;font-size:20px;}
 .hs-link{font-style:normal;cursor:pointer;}
 .hs-link-camera{background:#FFAB91;color:#7B2D00;}
